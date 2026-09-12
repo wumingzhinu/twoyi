@@ -102,6 +102,15 @@ public final class RomManager {
         saveLastKmsg(context);
     }
 
+    // 轻量级同步方法：只准备 loader symlink 等启动必需项，避免在 attachBaseContext 中阻塞
+    public static void ensureLoaderReady(Context context) {
+        try {
+            createLoaderSymlink(context);
+            ensureDir(new File(context.getDataDir(), "socket"));
+        } catch (Throwable ignored) {
+        }
+    }
+
     private static void createLoaderSymlink(Context context) {
         Path loaderSymlink = new File(context.getDataDir(), "loader64").toPath();
         String loaderPath = getLoaderPath(context);

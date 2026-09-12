@@ -206,7 +206,8 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
             if (true) {
                 boolean success = false;
                 try {
-                    success = TwoyiStatusManager.getInstance().waitBoot(15, TimeUnit.SECONDS);
+                    // 增加启动超时时间，兼容较新的 Android 设备 (一加 ACE 5 = Android 15)
+                    success = TwoyiStatusManager.getInstance().waitBoot(60, TimeUnit.SECONDS);
                 } catch (Throwable ignored) {
                 }
 

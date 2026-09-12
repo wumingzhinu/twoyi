@@ -14,6 +14,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
+      with:
+        lfs: true
 
     - name: Set up JDK 17
       uses: actions/setup-java@v5
@@ -48,14 +50,10 @@ jobs:
     - name: Set Environment
       run: echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653" >> $GITHUB_ENV
 
-    - name: Download rootfs from Release
+    - name: Verify rootfs.7z
       run: |
-        mkdir -p app/src/main/assets
-        # Download rootfs.7z from our repository's Release
-        curl -L -H "Accept: application/octet-stream" \
-          "https://github.com/wumingzhinu/twoyi/releases/download/rootfs-0.5.4/rootfs.7z" \
-          -o app/src/main/assets/rootfs.7z
         ls -lh app/src/main/assets/rootfs.7z
+        file app/src/main/assets/rootfs.7z
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew

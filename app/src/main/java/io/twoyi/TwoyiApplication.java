@@ -41,7 +41,19 @@ public class TwoyiApplication extends Application {
     protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
 
-        RomManager.ensureBootFiles(base);
+        // 同步执行轻量级 loader 准备（快速），确保渲染时 loader 已就绪
+        try {
+            RomManager.ensureLoaderReady(base);
+        } catch (Throwable ignored) {
+        }
+
+        // 将耗时操作移到后台线程，避免在 attachBaseContext 中阻塞导致 ANR/启动超时
+        new Thread(() -> {
+            try {
+                RomManager.ensureBootFiles(base);
+            } catch (Throwable ignored) {
+            }
+        }, "ensure-boot-files").start();
 
         TwoyiSocketServer.getInstance(base).start();
     }
