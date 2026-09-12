@@ -53,7 +53,7 @@ jobs:
         mkdir -p app/src/main/assets
         # Download rootfs.7z from our repository's Release
         curl -L -H "Accept: application/octet-stream" \
-          "https://github.com/wumingzhinu/twoyi/releases/download/untagged-fe81afde3ee7256f6fb4/rootfs.7z" \
+          "https://github.com/wumingzhinu/twoyi/releases/download/rootfs-0.5.4/rootfs.7z" \
           -o app/src/main/assets/rootfs.7z
         ls -lh app/src/main/assets/rootfs.7z
 
