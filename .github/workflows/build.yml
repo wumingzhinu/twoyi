@@ -22,7 +22,14 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
-    - name: Test JDK setup
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: aarch64-linux-android
+
+    - name: Test Rust setup
       run: |
-        java -version
-        echo "JDK setup successful!"
+        rustc --version
+        cargo --version
+        rustup target list --installed
+        echo "Rust setup successful!"
