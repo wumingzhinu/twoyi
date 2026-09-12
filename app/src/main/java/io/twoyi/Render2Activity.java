@@ -179,11 +179,17 @@ new Thread(() -> {
                 }
 
                 runOnUiThread(() -> {
+                    if (mSurfaceView.getParent() != null) {
+                        ((ViewGroup) mSurfaceView.getParent()).removeView(mSurfaceView);
+                    }
                     mRootView.addView(mSurfaceView, 0);
                     showBootingProcedure();
                 });
             }, "extract-rom").start();
         } else {
+            if (mSurfaceView.getParent() != null) {
+                ((ViewGroup) mSurfaceView.getParent()).removeView(mSurfaceView);
+            }
             mRootView.addView(mSurfaceView, 0);
             showBootingProcedure();
         }
