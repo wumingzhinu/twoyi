@@ -221,7 +221,7 @@ public final class RomManager {
         return DEFAULT_ROM_INFO;
     }
 
-    public static void extractRootfs(Context context, boolean romExist, boolean needsUpgrade, boolean forceInstall, boolean use3rdRom) {
+    public static boolean extractRootfs(Context context, boolean romExist, boolean needsUpgrade, boolean forceInstall, boolean use3rdRom) {
 
         // force remove system dir to avoiding wired issues
         removeSystemPartition(context);
@@ -229,8 +229,7 @@ public final class RomManager {
 
         if (!romExist) {
             // first init
-            extractRootfsInAssets(context);
-            return;
+            return extractRootfsInAssets(context);
         }
 
         if (forceInstall) {
@@ -239,13 +238,13 @@ public final class RomManager {
                 boolean success = extract3rdRootfs(context);
                 if (!success) {
                     showRootfsInstallationFailure(context);
-                    return;
+                    return false;
                 }
             } else {
                 // factory reset!!
                 if (!extractRootfsInAssets(context)) {
                     showRootfsInstallationFailure(context);
-                    return;
+                    return false;
                 }
             }
 
@@ -259,9 +258,11 @@ public final class RomManager {
                 Log.i(TAG, "upgrade factory rom..");
                 if (!extractRootfsInAssets(context)) {
                     showRootfsInstallationFailure(context);
+                    return false;
                 }
             }
         }
+        return true;
     }
 
     private static void showRootfsInstallationFailure(Context context) {
