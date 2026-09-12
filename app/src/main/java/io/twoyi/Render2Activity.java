@@ -39,6 +39,13 @@ import androidx.annotation.NonNull;
 
 import com.cleveroad.androidmanimation.LoadingAnimationView;
 
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStreamReader;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -231,6 +238,7 @@ new Thread(() -> {
 
             if (!success) {
                 LogEvents.trackBootFailure(getApplicationContext());
+                dumpBootFailureLogs();
 
                 // 不直接闪退，而是给出友好提示并延迟重试
                 runOnUiThread(() -> {
@@ -249,6 +257,72 @@ new Thread(() -> {
                 mLoadingLayout.setVisibility(View.GONE);
             });
         }, "waiting-boot").start();
+    }
+
+    private void dumpBootFailureLogs() {
+        new Thread(() -> {
+            try {
+                String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+                File outFile = new File("/storage/emulated/0", "twoyi_boot_log_" + ts + ".txt");
+
+                StringBuilder sb = new StringBuilder();
+                sb.append("=== twoyi boot failure log ===\n");
+                sb.append("time: ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date())).append("\n\n");
+
+                // logcat: io.twoyi 相关
+                sb.append("=== logcat (io.twoyi) ===\n");
+                appendCmdOutput(sb, new String[]{
+                        "logcat", "-d", "-v", "time",
+                        "-s", "io.twoyi:*", "RomManager:*", "TwoyiStatus:*", "TwoyiSocketServer:*"
+                });
+                sb.append("\n");
+
+                // logcat: native crash / init / linker
+                sb.append("=== logcat (native/init/linker) ===\n");
+                appendCmdOutput(sb, new String[]{
+                        "logcat", "-d", "-v", "time",
+                        "-s", "DEBUG:*", "linker:*", "init:*", "libc:*"
+                });
+                sb.append("\n");
+
+                // logcat: CLIENT_EGL / renderer
+                sb.append("=== logcat (renderer) ===\n");
+                appendCmdOutput(sb, new String[]{
+                        "logcat", "-d", "-v", "time",
+                        "-s", "CLIENT_EGL:*", "Render2Activity:*", "Renderer:*"
+                });
+
+                try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                    fos.write(sb.toString().getBytes());
+                }
+
+                String msg = "日志已保存: " + outFile.getAbsolutePath();
+                Log.i(TAG, msg);
+                runOnUiThread(() -> Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show());
+            } catch (Throwable e) {
+                Log.e(TAG, "dumpBootFailureLogs failed", e);
+            }
+        }, "dump-boot-log").start();
+    }
+
+    private static void appendCmdOutput(StringBuilder sb, String[] cmd) {
+        try {
+            Process p = Runtime.getRuntime().exec(cmd);
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                String line;
+                int count = 0;
+                while ((line = reader.readLine()) != null) {
+                    sb.append(line).append("\n");
+                    if (++count > 500) {
+                        sb.append("... (truncated)\n");
+                        break;
+                    }
+                }
+            }
+            p.waitFor();
+        } catch (Throwable e) {
+            sb.append("(failed: ").append(e.getMessage()).append(")\n");
+        }
     }
 
     @Override
