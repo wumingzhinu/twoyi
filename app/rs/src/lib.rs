@@ -146,17 +146,35 @@ pub fn renderer_remove_window(env: JNIEnv, _clz: jclass, surface: jobject) {
 
 #[no_mangle]
 pub fn handle_touch(env: JNIEnv, _clz: jclass, event: jobject) {
-    // TODO: cache the field id.
-    let ptr = env.get_field(event, "mNativePtr", "J").unwrap();
-
-    if let JValue::Long(p) = ptr {
-        let ev = unsafe {
-            let nonptr =
-            std::ptr::NonNull::new(std::mem::transmute::<i64, *mut ndk_sys::AInputEvent>(p))
-                .unwrap();
-            ndk::event::MotionEvent::from_ptr(nonptr)
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // TODO: cache the field id.
+        let ptr = match env.get_field(event, "mNativePtr", "J") {
+            Ok(v) => v,
+            Err(e) => {
+                error!("handle_touch: get_field failed: {:?}", e);
+                return;
+            }
         };
-        input::handle_touch(ev)
+
+        if let JValue::Long(p) = ptr {
+            if p == 0 {
+                error!("handle_touch: mNativePtr is null");
+                return;
+            }
+            let nonptr = match std::ptr::NonNull::new(std::mem::transmute::<i64, *mut ndk_sys::AInputEvent>(p)) {
+                Some(p) => p,
+                None => {
+                    error!("handle_touch: transmuted pointer is null");
+                    return;
+                }
+            };
+            let ev = unsafe { ndk::event::MotionEvent::from_ptr(nonptr) };
+            input::handle_touch(ev)
+        }
+    }));
+
+    if let Err(e) = result {
+        error!("handle_touch: panicked: {:?}", e);
     }
 }
 

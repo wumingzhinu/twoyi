@@ -96,14 +96,25 @@ pub fn input_event_write(
 }
 
 pub fn handle_touch(ev: MotionEvent) {
-    let opt = INPUT_SENDER.lock().unwrap();
+    let opt = match INPUT_SENDER.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            info!("handle_touch: INPUT_SENDER lock poisoned: {:?}", e);
+            return;
+        }
+    };
     if let Some(ref fd) = *opt {
 
         let action = ev.action();
         let pointer_index = ev.pointer_index();
         let pointer = ev.pointer_at_index(pointer_index);
-        let pointer_id = pointer.pointer_id();
+        let pointer_id = pointer.pointer_id() as usize;
         let pressure = pointer.pressure();
+
+        if pointer_id >= MAX_POINTERS {
+            info!("handle_touch: pointer_id {} out of range", pointer_id);
+            return;
+        }
 
         // info!("action: {:#?}, pointer_index: {}", action, pointer_index);
 
@@ -114,14 +125,17 @@ pub fn handle_touch(ev: MotionEvent) {
                 let x = pointer.x();
                 let y = pointer.y();
 
-                let mut mt = G_INPUT_MT.lock().unwrap();
-                mt[pointer_id as usize] = 1;
+                let mut mt = match G_INPUT_MT.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => return,
+                };
+                mt[pointer_id] = 1;
 
                 let mut index = 0;
                 while index < MAX_POINTERS {
                     if mt[index] != 0 {
-                        input_event_write(fd, EV_ABS, ABS_MT_SLOT, pointer_id);
-                        input_event_write(fd, EV_ABS, ABS_MT_TRACKING_ID, pointer_id + 1);
+                        input_event_write(fd, EV_ABS, ABS_MT_SLOT, pointer_id as i32);
+                        input_event_write(fd, EV_ABS, ABS_MT_TRACKING_ID, (pointer_id + 1) as i32);
 
                         if index == 0 {
                             input_event_write(fd, EV_KEY, BTN_TOUCH, 108);
@@ -139,12 +153,12 @@ pub fn handle_touch(ev: MotionEvent) {
                 }
             }
             MotionAction::Up => {
-                // let x = pointer.x();
-                // let y = pointer.y();
-
                 let mut index = 0;
                 while index != MAX_POINTERS {
-                    let mut mt = G_INPUT_MT.lock().unwrap();
+                    let mut mt = match G_INPUT_MT.lock() {
+                        Ok(guard) => guard,
+                        Err(_) => return,
+                    };
                     if mt[index] != 0 {
                         mt[index] = 0;
                         input_event_write(fd, EV_ABS, ABS_MT_SLOT, index.try_into().unwrap());
@@ -158,7 +172,10 @@ pub fn handle_touch(ev: MotionEvent) {
                 let mut index = 0;
 
                 while index != MAX_POINTERS {
-                    let mt = G_INPUT_MT.lock().unwrap();
+                    let mt = match G_INPUT_MT.lock() {
+                        Ok(guard) => guard,
+                        Err(_) => return,
+                    };
                     if mt[index] != 0 {
                         let x = pointer.x();
                         let y = pointer.y();
@@ -177,16 +194,16 @@ pub fn handle_touch(ev: MotionEvent) {
                 }
             }
             MotionAction::Cancel | MotionAction::PointerUp => {
-                // let x = pointer.x();
-                // let y = pointer.y();
-
-                let mut mt = G_INPUT_MT.lock().unwrap();
-                if mt[pointer_id as usize] == 0 {
+                let mut mt = match G_INPUT_MT.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => return,
+                };
+                if pointer_id >= MAX_POINTERS || mt[pointer_id] == 0 {
                     return;
                 }
 
-                mt[pointer_id as usize] = 0;
-                input_event_write(fd, EV_ABS, ABS_MT_SLOT, pointer_id);
+                mt[pointer_id] = 0;
+                input_event_write(fd, EV_ABS, ABS_MT_SLOT, pointer_id as i32);
                 input_event_write(fd, EV_ABS, ABS_MT_TRACKING_ID, -1);
                 input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT);
             }
