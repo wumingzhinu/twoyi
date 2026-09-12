@@ -288,18 +288,22 @@ public final class RomManager {
     }
 
     public static int extractRootfs(Context context, File rootfs7z) {
+        long startTime = SystemClock.elapsedRealtime();
         try (SevenZFile zFile = new SevenZFile(rootfs7z)) {
             SevenZArchiveEntry entry;
             File rootfsDir = context.getDataDir();
+            byte[] buffer = new byte[64 * 1024]; // 增大缓冲区到 64KB，加快解压
             
             while ((entry = zFile.getNextEntry()) != null) {
                 File outFile = new File(rootfsDir, entry.getName());
                 if (entry.isDirectory()) {
                     outFile.mkdirs();
                 } else {
-                    outFile.getParentFile().mkdirs();
-                    try (OutputStream os = new FileOutputStream(outFile)) {
-                        byte[] buffer = new byte[8192];
+                    File parent = outFile.getParentFile();
+                    if (parent != null) {
+                        parent.mkdirs();
+                    }
+                    try (OutputStream os = new BufferedOutputStream(new FileOutputStream(outFile), 64 * 1024)) {
                         int len;
                         while ((len = zFile.read(buffer)) > 0) {
                             os.write(buffer, 0, len);
@@ -307,6 +311,7 @@ public final class RomManager {
                     }
                 }
             }
+            Log.i(TAG, "extractRootfs done in " + (SystemClock.elapsedRealtime() - startTime) + "ms");
             return 0;
         } catch (Exception e) {
             Log.e(TAG, "extract rootfs failed", e);

@@ -203,26 +203,26 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
         mBootLogView.setVisibility(View.VISIBLE);
         new Thread(() -> {
 
-            if (true) {
-                boolean success = false;
-                try {
-                    // 增加启动超时时间，兼容较新的 Android 设备 (一加 ACE 5 = Android 15)
-                    success = TwoyiStatusManager.getInstance().waitBoot(60, TimeUnit.SECONDS);
-                } catch (Throwable ignored) {
-                }
+            boolean success = false;
+            try {
+                // 给内部系统足够的启动时间（120秒），较新的设备启动更慢
+                success = TwoyiStatusManager.getInstance().waitBoot(120, TimeUnit.SECONDS);
+            } catch (Throwable ignored) {
+            }
 
-                if (!success) {
-                    LogEvents.trackBootFailure(getApplicationContext());
+            if (!success) {
+                LogEvents.trackBootFailure(getApplicationContext());
 
-                    runOnUiThread(() -> Toast.makeText(getApplicationContext(), R.string.boot_failed, Toast.LENGTH_SHORT).show());
-
-                    // waiting for track
-                    SystemClock.sleep(3000);
-
-                    finish();
-                    System.exit(0);
-                    return;
-                }
+                // 不直接闪退，而是给出友好提示并延迟重试
+                runOnUiThread(() -> {
+                    Toast.makeText(getApplicationContext(), R.string.boot_failed, Toast.LENGTH_LONG).show();
+                    // 3秒后回到主线程重试
+                    mRootView.postDelayed(() -> {
+                        TwoyiStatusManager.getInstance().reset();
+                        bootSystem();
+                    }, 3000);
+                });
+                return;
             }
 
             runOnUiThread(() -> {
