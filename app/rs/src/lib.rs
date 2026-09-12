@@ -123,7 +123,7 @@ pub fn renderer_init(
             .stderr(Stdio::from(errors))
             .spawn()
         {
-            Ok(mut child) => {
+            Ok(child) => {
                 info!("init process started, pid: {}", child.id());
                 // 启动后立即给子进程更多执行机会
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -186,7 +186,7 @@ pub fn handle_touch(env: JNIEnv, _clz: jclass, event: jobject) {
                 error!("handle_touch: mNativePtr is null");
                 return;
             }
-            let nonptr = match std::ptr::NonNull::new(std::mem::transmute::<i64, *mut ndk_sys::AInputEvent>(p)) {
+            let nonptr = match unsafe { std::ptr::NonNull::new(std::mem::transmute::<i64, *mut ndk_sys::AInputEvent>(p)) } {
                 Some(p) => p,
                 None => {
                     error!("handle_touch: transmuted pointer is null");
