@@ -48,40 +48,14 @@ jobs:
     - name: Set Environment
       run: echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653" >> $GITHUB_ENV
 
-    - name: Download original APK and extract rootfs
-      run: |
-        # Download original release APK
-        curl -L -H "Accept: application/octet-stream" \
-          "https://github.com/twoyi/twoyi/releases/download/0.5.4/twoyi_0.5.4-03211927-release.apk" \
-          -o original.apk
-        
-        # Extract rootfs.7z from original APK
-        unzip -o original.apk rootfs.7z -d /tmp/ || echo "rootfs.7z not found in APK"
-        
-        # Check if rootfs.7z exists
-        if [ -f /tmp/rootfs.7z ]; then
-          echo "rootfs.7z extracted successfully"
-          ls -lh /tmp/rootfs.7z
-        else
-          echo "rootfs.7z not found, checking assets folder..."
-          # Check if assets folder has rootfs
-          ls -la app/src/main/assets/ || echo "No assets folder"
-        fi
-
-    - name: Copy rootfs to assets
+    - name: Download rootfs from Release
       run: |
         mkdir -p app/src/main/assets
-        if [ -f /tmp/rootfs.7z ]; then
-          cp /tmp/rootfs.7z app/src/main/assets/
-          echo "rootfs.7z copied to assets"
-        elif [ -f app/src/main/assets/rootfs.7z ]; then
-          echo "rootfs.7z already exists in assets"
-        else
-          echo "WARNING: rootfs.7z not found!"
-          # Create a placeholder to avoid build failure
-          touch app/src/main/assets/rootfs.7z
-        fi
-        ls -lh app/src/main/assets/
+        # Download rootfs.7z from our repository's Release
+        curl -L -H "Accept: application/octet-stream" \
+          "https://github.com/wumingzhinu/twoyi/releases/download/untagged-fe81afde3ee7256f6fb4/rootfs.7z" \
+          -o app/src/main/assets/rootfs.7z
+        ls -lh app/src/main/assets/rootfs.7z
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
