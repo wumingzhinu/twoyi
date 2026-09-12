@@ -46,22 +46,12 @@ jobs:
       working-directory: app/rs
       run: sh build_rs.sh --release
 
-    - name: Build Debug APK
-      run: ./gradlew assembleDebug
+    - name: Build APK
+      run: ./gradlew assembleDebug assembleRelease
 
-    - name: Build Release APK
-      run: ./gradlew assembleRelease
-
-    - name: Upload Debug APK
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: twoyi-debug-apk
-        path: app/build/outputs/apk/debug/*.apk
+        name: twoyi-apk
+        path: app/build/outputs/apk/**/*.apk
         retention-days: 7
-
-    - name: Upload Release APK
-      uses: actions/upload-artifact@v3
-      with:
-        name: twoyi-release-apk
-        path: app/build/outputs/apk/release/*.apk
-        retention-days: 30
