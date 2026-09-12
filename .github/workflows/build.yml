@@ -28,10 +28,40 @@ jobs:
         targets: aarch64-linux-android
 
     - name: Install cargo-xdk
-      run: |
-        cargo install cargo-xdk
+      run: cargo install cargo-xdk
 
-    - name: Test cargo-xdk setup
-      run: |
-        cargo xdk --version
-        echo "cargo-xdk setup successful!"
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v2
+
+    - name: Install NDK
+      run: sdkmanager --install "ndk;22.1.7171670"
+
+    - name: Set NDK Home
+      run: echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/22.1.7171670" >> $GITHUB_ENV
+
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+
+    - name: Build Rust libraries
+      working-directory: app/rs
+      run: sh build_rs.sh --release
+
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug
+
+    - name: Build Release APK
+      run: ./gradlew assembleRelease
+
+    - name: Upload Debug APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: twoyi-debug-apk
+        path: app/build/outputs/apk/debug/*.apk
+        retention-days: 7
+
+    - name: Upload Release APK
+      uses: actions/upload-artifact@v3
+      with:
+        name: twoyi-release-apk
+        path: app/build/outputs/apk/release/*.apk
+        retention-days: 30
