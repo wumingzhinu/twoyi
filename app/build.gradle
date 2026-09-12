@@ -11,6 +11,7 @@ plugins {
 }
 
 android {
+    namespace 'io.twoyi'
     compileSdkVersion 33
     buildToolsVersion "33.0.2"
 
