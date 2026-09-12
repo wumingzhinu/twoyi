@@ -27,9 +27,11 @@ jobs:
       with:
         targets: aarch64-linux-android
 
-    - name: Test Rust setup
+    - name: Install cargo-xdk
       run: |
-        rustc --version
-        cargo --version
-        rustup target list --installed
-        echo "Rust setup successful!"
+        cargo install cargo-xdk
+
+    - name: Test cargo-xdk setup
+      run: |
+        cargo xdk --version
+        echo "cargo-xdk setup successful!"
