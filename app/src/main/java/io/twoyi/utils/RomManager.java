@@ -16,7 +16,6 @@ import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
 
-import com.hzy.libp7zip.P7ZipApi;
 import com.topjohnwu.superuser.Shell;
 
 import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry;
@@ -280,10 +279,30 @@ public final class RomManager {
     }
 
     public static int extractRootfs(Context context, File rootfs7z) {
-
-        int cpu = Runtime.getRuntime().availableProcessors();
-        return P7ZipApi.executeCommand(String.format(Locale.US, "7z x -mmt=%d -aoa '%s' '-o%s'",
-                cpu, rootfs7z, context.getDataDir()));
+        try (SevenZFile zFile = new SevenZFile(rootfs7z)) {
+            SevenZArchiveEntry entry;
+            File rootfsDir = context.getDataDir();
+            
+            while ((entry = zFile.getNextEntry()) != null) {
+                File outFile = new File(rootfsDir, entry.getName());
+                if (entry.isDirectory()) {
+                    outFile.mkdirs();
+                } else {
+                    outFile.getParentFile().mkdirs();
+                    try (OutputStream os = new FileOutputStream(outFile)) {
+                        byte[] buffer = new byte[8192];
+                        int len;
+                        while ((len = zFile.read(buffer)) > 0) {
+                            os.write(buffer, 0, len);
+                        }
+                    }
+                }
+            }
+            return 0;
+        } catch (Exception e) {
+            Log.e(TAG, "extract rootfs failed", e);
+            return -1;
+        }
     }
 
     public static boolean extractRootfsInAssets(Context context) {
