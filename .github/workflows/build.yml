@@ -30,15 +30,23 @@ jobs:
     - name: Install cargo-xdk
       run: cargo install cargo-xdk
 
+    - name: Setup Android SDK
+      run: |
+        mkdir -p $ANDROID_HOME/cmdline-tools
+        cd /tmp
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+        unzip -q commandlinetools-linux-11076708_latest.zip
+        mv cmdline-tools $ANDROID_HOME/cmdline-tools/latest
+        echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+        echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+
     - name: Install Android NDK
       run: |
         yes | sdkmanager --licenses || true
         sdkmanager --install "ndk;22.1.7171670"
 
     - name: Set Environment
-      run: |
-        echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/22.1.7171670" >> $GITHUB_ENV
-        echo "JAVA_HOME=/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.14-7/x64" >> $GITHUB_ENV
+      run: echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/22.1.7171670" >> $GITHUB_ENV
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
