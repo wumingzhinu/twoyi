@@ -93,11 +93,29 @@ pub fn renderer_init(
             }
         });
 
-        let loader_path: String = env.get_string(loader.into()).unwrap().into();
+        let loader_path: String = match env.get_string(loader.into()) {
+            Ok(s) => s.into(),
+            Err(e) => {
+                error!("renderer_init: get_string failed: {:?}", e);
+                return;
+            }
+        };
         let working_dir = "/data/data/io.twoyi/rootfs";
         let log_path = "/data/data/io.twoyi/log.txt";
-        let outputs = File::create(log_path).unwrap();
-        let errors = outputs.try_clone().unwrap();
+        let outputs = match File::create(log_path) {
+            Ok(f) => f,
+            Err(e) => {
+                error!("renderer_init: create log file failed: {}", e);
+                return;
+            }
+        };
+        let errors = match outputs.try_clone() {
+            Ok(f) => f,
+            Err(e) => {
+                error!("renderer_init: clone log file handle failed: {}", e);
+                return;
+            }
+        };
         match Command::new("./init")
             .current_dir(working_dir)
             .env("TYLOADER", loader_path)
@@ -130,6 +148,10 @@ pub fn renderer_reset_window(
     debug!("reset_window");
     unsafe {
         let window = ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface);
+        if window.is_null() {
+            error!("renderer_reset_window: ANativeWindow_fromSurface returned null");
+            return;
+        }
         renderer_bindings::resetSubWindow(window as *mut c_void, 0, 0, _width, _height, _width, _height, 1.0, 0.0);
     }
 }
@@ -137,9 +159,12 @@ pub fn renderer_reset_window(
 #[no_mangle]
 pub fn renderer_remove_window(env: JNIEnv, _clz: jclass, surface: jobject) {
     debug!("renderer_remove_window");
-
     unsafe {
         let window = ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface);
+        if window.is_null() {
+            error!("renderer_remove_window: ANativeWindow_fromSurface returned null");
+            return;
+        }
         renderer_bindings::removeSubWindow(window as *mut c_void);
     }
 }
@@ -178,9 +203,12 @@ pub fn handle_touch(env: JNIEnv, _clz: jclass, event: jobject) {
     }
 }
 
+#[no_mangle]
 pub fn send_key_code(_env: JNIEnv, _clz: jclass, keycode: jint) {
     debug!("send key code!");
-    input::send_key_code(keycode);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        input::send_key_code(keycode);
+    }));
 }
 
 unsafe fn register_natives(jvm: &JavaVM, class_name: &str, methods: &[NativeMethod]) -> jint {

@@ -243,9 +243,10 @@ fn generate_touch_device(width: i32, height: i32) -> device_info {
 
     info.prop_bitmask[0] = INPUT_PROP_BUTTONPAD as u8;
 
-    info.abs_bitmask[ABS_RZ as usize] = 0x80;
-    info.abs_bitmask[ABS_THROTTLE as usize] = 0x60;
-    info.abs_bitmask[ABS_RUDDER as usize] = 0x2;
+    // ABS_RZ=5, ABS_THROTTLE=6, ABS_RUDDER=7 are all in byte 0 of abs_bitmask
+    info.abs_bitmask[(ABS_RZ / 8) as usize] |= 1 << (ABS_RZ % 8);
+    info.abs_bitmask[(ABS_THROTTLE / 8) as usize] |= 1 << (ABS_THROTTLE % 8);
+    info.abs_bitmask[(ABS_RUDDER / 8) as usize] |= 1 << (ABS_RUDDER % 8);
 
     info.abs_min[ABS_MT_POSITION_X as usize] = 0;
     info.abs_max[ABS_MT_POSITION_X as usize] = width as u32;
@@ -266,7 +267,13 @@ fn generate_touch_device(width: i32, height: i32) -> device_info {
 fn touch_server(width: i32, height: i32) {
     let device = generate_touch_device(width, height);
     let _ = std::fs::remove_file(TOUCH_PATH);
-    let listener = unix_socket::UnixListener::bind(TOUCH_PATH).unwrap();
+    let listener = match unix_socket::UnixListener::bind(TOUCH_PATH) {
+        Ok(l) => l,
+        Err(e) => {
+            info!("touch_server: bind failed: {:?}", e);
+            return;
+        }
+    };
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
@@ -311,7 +318,11 @@ fn generate_key_device() -> device_info {
 }
 
 pub fn send_key_code(_keycode: i32) {
-    if let Some(ref tx) = *KEY_SENDER.lock().unwrap() {
+    let guard = match KEY_SENDER.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    if let Some(ref tx) = *guard {
         input_event_write(tx, EV_KEY, KEY_BACK, 1);
         input_event_write(tx, EV_SYN, SYN_REPORT, SYN_REPORT);
         input_event_write(tx, EV_KEY, KEY_BACK, 0);
@@ -321,7 +332,13 @@ pub fn send_key_code(_keycode: i32) {
 fn key_server() {
     let device = generate_key_device();
     let _ = std::fs::remove_file(KEY_PATH);
-    let listener = unix_socket::UnixListener::bind(KEY_PATH).unwrap();
+    let listener = match unix_socket::UnixListener::bind(KEY_PATH) {
+        Ok(l) => l,
+        Err(e) => {
+            info!("key_server: bind failed: {:?}", e);
+            return;
+        }
+    };
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
