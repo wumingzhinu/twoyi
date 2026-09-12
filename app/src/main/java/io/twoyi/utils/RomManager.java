@@ -97,7 +97,9 @@ public final class RomManager {
 
         createLoaderSymlink(context);
 
-        killOrphanProcess();
+        // killOrphanProcess 会执行 shell 命令，非常耗时且危险（杀死系统孤儿进程），
+        // 已从启动路径移除，避免阻塞启动
+        // killOrphanProcess();
 
         saveLastKmsg(context);
     }

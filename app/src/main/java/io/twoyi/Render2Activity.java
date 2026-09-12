@@ -158,12 +158,25 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
 
             showTipsForFirstBoot();
 
-            new Thread(() -> {
+new Thread(() -> {
                 mIsExtracting.set(true);
-                RomManager.extractRootfs(getApplicationContext(), romExist, factoryRomUpdated, forceInstall, use3rdRom);
+                boolean extractSuccess = false;
+                try {
+                    extractSuccess = RomManager.extractRootfs(getApplicationContext(), romExist, factoryRomUpdated, forceInstall, use3rdRom);
+                    if (extractSuccess) {
+                        RomManager.initRootfs(getApplicationContext());
+                    }
+                } catch (Throwable e) {
+                    Log.e(TAG, "extract rootfs error", e);
+                }
                 mIsExtracting.set(false);
 
-                RomManager.initRootfs(getApplicationContext());
+                if (!extractSuccess) {
+                    // 解压失败，给出明确错误提示，避免无限重试
+                    runOnUiThread(() -> Toast.makeText(getApplicationContext(),
+                            R.string.boot_failed, Toast.LENGTH_LONG).show());
+                    return;
+                }
 
                 runOnUiThread(() -> {
                     mRootView.addView(mSurfaceView, 0);

@@ -98,12 +98,22 @@ pub fn renderer_init(
         let log_path = "/data/data/io.twoyi/log.txt";
         let outputs = File::create(log_path).unwrap();
         let errors = outputs.try_clone().unwrap();
-        let _ = Command::new("./init")
+        match Command::new("./init")
             .current_dir(working_dir)
             .env("TYLOADER", loader_path)
             .stdout(Stdio::from(outputs))
             .stderr(Stdio::from(errors))
-            .spawn();
+            .spawn()
+        {
+            Ok(mut child) => {
+                info!("init process started, pid: {}", child.id());
+                // 启动后立即给子进程更多执行机会
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => {
+                error!("failed to start init process: {}", e);
+            }
+        }
     }
 }
 
