@@ -49,9 +49,16 @@ jobs:
     - name: Build APK
       run: ./gradlew assembleDebug assembleRelease
 
-    - name: Upload Artifacts
-      uses: actions/upload-artifact@v3
+    - name: Upload Debug APK
+      uses: actions/upload-artifact@v4
       with:
-        name: twoyi-apk
-        path: app/build/outputs/apk/**/*.apk
+        name: twoyi-debug-apk
+        path: app/build/outputs/apk/debug/*.apk
         retention-days: 7
+
+    - name: Upload Release APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: twoyi-release-apk
+        path: app/build/outputs/apk/release/*.apk
+        retention-days: 30
