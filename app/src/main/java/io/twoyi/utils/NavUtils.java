@@ -37,19 +37,12 @@ public class NavUtils {
         }
         final int height = getNavigationHeight(activity);
 
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(activity.getWindow().getDecorView(), (v, windowInsets) -> {
+        ViewCompat.setOnApplyWindowInsetsListener(activity.getWindow().getDecorView(), (v, windowInsets) -> {
             boolean isShowing = false;
             int b = 0;
             if (windowInsets != null) {
-                WindowInsetsCompat insets;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    // API 30+: use WindowInsetsCompat
-                    insets = WindowInsetsCompat.toWindowInsetsCompat(windowInsets);
-                    b = insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
-                } else {
-                    // API 24-29: legacy systemWindowInsetBottom
-                    b = windowInsets.getSystemWindowInsetBottom();
-                }
+                // Use platform WindowInsets API (deprecated on API 30+, but works for minSdk 24)
+                b = windowInsets.getSystemWindowInsetBottom();
                 isShowing = (b == height);
             }
             if (onNavigationStateListener != null && b <= height) {
