@@ -305,25 +305,55 @@ new Thread(() -> {
 
             // log.txt 超过 90 秒没有更新 → 可能卡死
             if (now - lastModified > 90_000) {
-                // 检查 init 进程是否还在
-                Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", "ps -ef"});
-                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.contains("rootfs/init") || line.contains("/init ")) {
-                        reader.close();
-                        p.waitFor();
-                        return true;
-                    }
+                boolean found = isInitProcessRunning();
+                if (!found) {
+                    Log.e(TAG, "container init process not found, log.txt stale for " + (now - lastModified) / 1000 + "s");
+                    return false;
                 }
-                reader.close();
-                p.waitFor();
-                Log.e(TAG, "container init process not found, log.txt stale for " + (now - lastModified) / 1000 + "s");
-                return false;
             }
         } catch (Throwable ignored) {
         }
         return true;
+    }
+
+    /**
+     * 通过 /proc 扫描容器 init 进程。
+     * 注意：不要用 ps -ef — Rust 侧以 "./init" 相对路径启动，
+     * ps 显示的 cmdline 不含 "rootfs/init" 全路径，误判会提前终止启动。
+     */
+    private boolean isInitProcessRunning() {
+        try {
+            File procDir = new File("/proc");
+            File[] entries = procDir.listFiles();
+            if (entries == null) return false;
+            for (File entry : entries) {
+                String name = entry.getName();
+                if (!name.matches("\\d+")) continue; // 只看数字 PID
+                try {
+                    File cmdlineFile = new File(entry, "cmdline");
+                    if (!cmdlineFile.exists() || !cmdlineFile.canRead()) continue;
+                    byte[] buf = new byte[512];
+                    int len;
+                    try (FileInputStream fis = new FileInputStream(cmdlineFile)) {
+                        len = fis.read(buf);
+                    }
+                    if (len <= 0) continue;
+                    String cmdline = new String(buf, 0, len);
+                    // cmdline 中参数以 \0 分隔，init 常见形式:
+                    //   "./init" (相对路径) / "rootfs/init" / ".../libtwoyi_init.so" / "init"
+                    if (cmdline.contains("rootfs/init")
+                            || cmdline.contains("./init")
+                            || cmdline.contains("libtwoyi_init")
+                            || cmdline.contains("\0init\0")
+                            || cmdline.equals("init")) {
+                        return true;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
     }
 
     private void dumpBootFailureLogs() {
