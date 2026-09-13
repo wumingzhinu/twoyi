@@ -43,8 +43,8 @@ pub fn renderer_init(
     _clz: jclass,
     surface: jobject,
     loader: jstring,
-    xdpi: jfloat,
-    ydpi: jfloat,
+    xdpi: f32,
+    ydpi: f32,
     fps: jint,
 ) {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -59,8 +59,8 @@ fn renderer_init_inner(
     env: &JNIEnv,
     surface: jobject,
     loader: jstring,
-    xdpi: jfloat,
-    ydpi: jfloat,
+    xdpi: f32,
+    ydpi: f32,
     fps: jint,
 ) {
     debug!("renderer_init");
