@@ -431,10 +431,10 @@ new Thread(() -> {
                 sb.append("rootfsDir: ").append(rootfsDir.getAbsolutePath()).append("\n");
                 sb.append("\n");
 
-                // 检查 nativeLibDir 中的 twoyi_init
+                // 检查 nativeLibDir 中的 libtwoyi_init.so
                 try {
                     String nativeLibDir = getApplicationInfo().nativeLibraryDir;
-                    File twoyiInit = new File(nativeLibDir, "twoyi_init");
+                    File twoyiInit = new File(nativeLibDir, "libtwoyi_init.so");
                     sb.append("=== nativeLibDir twoyi_init ===\n");
                     sb.append("path: ").append(twoyiInit.getAbsolutePath()).append("\n");
                     sb.append("exists: ").append(twoyiInit.exists()).append("\n");

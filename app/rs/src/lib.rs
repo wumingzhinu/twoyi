@@ -132,15 +132,15 @@ fn renderer_init_inner(
                 return;
             }
         };
-        // Android 12+ data 目录 noexec：先尝试 ./init（symlink 到 nativeLibDir），
-        // 若失败则从 TYLOADER 路径推导 nativeLibDir 直接执行 twoyi_init
+// Android 12+ data 目录 noexec：先尝试 ./init（symlink 到 nativeLibDir），
+        // 若失败则从 TYLOADER 路径推导 nativeLibDir 直接执行 libtwoyi_init.so
         let init_candidates = {
             let mut candidates: Vec<String> = vec![
                 format!("{}/init", working_dir),
             ];
             // 从 loader_path 推导 nativeLibDir: .../lib/arm64/libloader.so -> .../lib/arm64/
             if let Some(parent) = std::path::Path::new(&loader_path).parent() {
-                candidates.push(format!("{}/twoyi_init", parent.display()));
+                candidates.push(format!("{}/libtwoyi_init.so", parent.display()));
             }
             candidates
         };

@@ -328,8 +328,8 @@ public final class RomManager {
      * Android 12+ 对应用数据目录启用 W^X，noexec 挂载阻止执行其中的二进制。
      * 将 rootfs/init 替换为指向 nativeLibraryDir 中副本的符号链接，使容器进程可以 exec。
      *
-     * 同时处理两种来源：
-     *   - APK 构建时已将 init 放入 jniLibs/ 作为 twoyi_init，系统安装自动提取到 nativeLibDir（推荐路径）
+* 同时处理两种来源：
+     *   - APK 构建时已将 init 放入 jniLibs 作为 libtwoyi_init.so，系统安装自动提取到 nativeLibDir（推荐路径）
      *   - 运行时从 rootfs/init 尝试复制到 nativeLibDir（可能被 Android 11+ 沙箱阻止）
      */
     private static void ensureExecutableInNativeLib(Context context) {
@@ -338,7 +338,7 @@ public final class RomManager {
             File nativeLibDir = new File(ai.nativeLibraryDir);
             File rootfsDir = getRootfsDir(context);
             File initInRootfs = new File(rootfsDir, "init");
-            File initInLib = new File(nativeLibDir, "twoyi_init");
+            File initInLib = new File(nativeLibDir, "libtwoyi_init.so");
 
             // 确定 init 来源
             File initSource = null;
@@ -346,6 +346,9 @@ public final class RomManager {
             if (initInLib.exists() && initInLib.length() > 0) {
                 initSource = initInLib;
                 Log.i(TAG, "using APK-installed init: " + initInLib.getAbsolutePath());
+            } else if (initInLibFallback.exists() && initInLibFallback.length() > 0) {
+                initSource = initInLibFallback;
+                Log.i(TAG, "using fallback APK-installed init: " + initInLibFallback.getAbsolutePath());
             } else if (initInRootfs.exists() && initInRootfs.length() > 0) {
                 // 尝试复制到 nativeLibDir（Android 11+ 写入此位置通常被沙箱阻止）
                 try {
