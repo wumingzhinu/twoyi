@@ -78,3 +78,20 @@ jobs:
         name: twoyi-release-apk
         path: app/build/outputs/apk/release/*.apk
         retention-days: 30
+
+    - name: Create GitHub Release
+      if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ci-latest
+        name: "Twoyi CI Build #${{ github.run_number }}"
+        body: |
+          Automated build from commit ${{ github.sha }}
+          - Android 7-16 compatible (API 24-36)
+          - Portrait orientation
+          - Debug & Release APKs
+        files: |
+          app/build/outputs/apk/debug/*.apk
+          app/build/outputs/apk/release/*.apk
+        overwrite: true
+        make_latest: true
