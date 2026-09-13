@@ -19,7 +19,12 @@
 package io.twoyi;
 
 import android.app.Activity;
+import android.content.ContentResolver;
+import android.content.ContentValues;
+import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
@@ -46,6 +51,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -78,6 +84,9 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
     private final AtomicBoolean mIsExtracting = new AtomicBoolean(false);
     private int mBootRetryCount = 0;
     private static final int MAX_BOOT_RETRIES = 2;
+
+    /** 启动失败重试计数，超过 3 次停止自动重试，避免无限循环 */
+    private final java.util.concurrent.atomic.AtomicInteger mBootFailCount = new java.util.concurrent.atomic.AtomicInteger(0);
 
     private final SurfaceHolder.Callback mSurfaceCallback = new SurfaceHolder.Callback() {
         @Override
@@ -272,25 +281,24 @@ new Thread(() -> {
             if (!success) {
                 mBootRetryCount++;
                 LogEvents.trackBootFailure(getApplicationContext());
-
-                // 写日志到两个位置：app 外存 + /sdcard 根目录
+                mBootFailCount.incrementAndGet();
+                mBootRetryCount = mBootFailCount.get();
                 String logPath = dumpBootFailureLogs();
-                dumpToSdcardRoot(logPath);
 
+                final boolean shouldRetry = mBootFailCount.get() <= 3;
                 runOnUiThread(() -> {
-                    mLoadingText.setText("Boot failed (attempt " + mBootRetryCount + "/" + (MAX_BOOT_RETRIES + 1) + ")\nLog: " + logPath);
-                    Toast.makeText(getApplicationContext(), "Boot failed, log: " + logPath, Toast.LENGTH_LONG).show();
+                    String msg = "Boot failed (attempt " + mBootRetryCount + "/3)\nCheck Downloads for log";
+                    mLoadingText.setText(msg);
+                    Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show();
                 });
 
-                if (mBootRetryCount <= MAX_BOOT_RETRIES) {
+                if (shouldRetry) {
                     mRootView.postDelayed(() -> {
                         TwoyiStatusManager.getInstance().reset();
                         bootSystem();
-                    }, 8000);
+                    }, 5000);
                 } else {
-                    runOnUiThread(() -> {
-                        mLoadingText.setText("Boot failed " + (MAX_BOOT_RETRIES + 1) + " times.\nCheck: /sdcard/boot_fail_*.txt");
-                    });
+                    Log.e(TAG, "boot failed " + mBootFailCount.get() + " times, stop retrying. Check boot_logs in Downloads");
                 }
                 return;
             }
@@ -320,38 +328,57 @@ new Thread(() -> {
 
             // log.txt 超过 90 秒没有更新 → 可能卡死
             if (now - lastModified > 90_000) {
-                // 检查 init 进程是否还在
-                Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", "ps -ef"});
-                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (line.contains("rootfs/init") || line.contains("/init ")) {
-                        reader.close();
-                        p.waitFor();
-                        return true;
-                    }
+                boolean found = isInitProcessRunning();
+                if (!found) {
+                    Log.e(TAG, "container init process not found, log.txt stale for " + (now - lastModified) / 1000 + "s");
+                    return false;
                 }
-                reader.close();
-                p.waitFor();
-                Log.e(TAG, "container init process not found, log.txt stale for " + (now - lastModified) / 1000 + "s");
-                return false;
             }
         } catch (Throwable ignored) {
         }
         return true;
     }
 
+    /**
+     * 通过 /proc 扫描容器 init 进程。
+     */
+    private boolean isInitProcessRunning() {
+        try {
+            File procDir = new File("/proc");
+            File[] entries = procDir.listFiles();
+            if (entries == null) return false;
+            for (File entry : entries) {
+                String name = entry.getName();
+                if (!name.matches("\\d+")) continue;
+                try {
+                    File cmdlineFile = new File(entry, "cmdline");
+                    if (!cmdlineFile.exists() || !cmdlineFile.canRead()) continue;
+                    byte[] buf = new byte[512];
+                    int len;
+                    try (FileInputStream fis = new FileInputStream(cmdlineFile)) {
+                        len = fis.read(buf);
+                    }
+                    if (len <= 0) continue;
+                    String cmdline = new String(buf, 0, len);
+                    if (cmdline.contains("rootfs/init")
+                            || cmdline.contains("./init")
+                            || cmdline.contains("libtwoyi_init")
+                            || cmdline.contains("\0init\0")
+                            || cmdline.equals("init")) {
+                        return true;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
     private String dumpBootFailureLogs() {
-        File outFile = null;
+        String savedPath = null;
         try {
             String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-
-            // 写到 /sdcard 根目录 — 文件管理器一定能找到
-            File sdcardDir = new File("/sdcard");
-            if (!sdcardDir.canWrite()) {
-                sdcardDir = new File("/storage/emulated/0");
-            }
-            outFile = new File(sdcardDir, "boot_fail_" + ts + ".txt");
 
             StringBuilder sb = new StringBuilder();
             sb.append("=== twoyi boot failure log ===\n");
@@ -369,12 +396,12 @@ new Thread(() -> {
             }
             sb.append("abi: ").append(abiStr.length() > 0 ? abiStr.toString() : "unknown").append("\n");
             sb.append("fingerprint: ").append(Build.FINGERPRINT).append("\n");
-            sb.append("retry: ").append(mBootRetryCount).append("/").append(MAX_BOOT_RETRIES).append("\n\n");
+            sb.append("retry: ").append(mBootRetryCount).append("/3\n\n");
 
-            // nativeLibDir 信息
+            // nativeLibDir
+            sb.append("=== nativeLibDir ===\n");
             try {
                 String nativeLibDir = getApplicationInfo().nativeLibraryDir;
-                sb.append("=== nativeLibDir ===\n");
                 sb.append("path: ").append(nativeLibDir).append("\n");
                 File libtwoyi = new File(nativeLibDir, "libtwoyi.so");
                 sb.append("libtwoyi.so: ").append(libtwoyi.exists() ? "OK (" + libtwoyi.length() + ")" : "MISSING").append("\n");
@@ -387,7 +414,7 @@ new Thread(() -> {
             }
             sb.append("\n");
 
-            // rootfs/init 检查
+            // rootfs/init
             sb.append("=== rootfs/init check ===\n");
             try {
                 File rootfsDir = RomManager.getRootfsDir(getApplicationContext());
@@ -404,9 +431,6 @@ new Thread(() -> {
                         sb.append("init isSymlink: ").append(!canonical.equals(absolute)).append("\n");
                         if (!canonical.equals(absolute)) {
                             sb.append("init symlinkTarget: ").append(canonical).append("\n");
-                            File target = new File(canonical);
-                            sb.append("target exists: ").append(target.exists()).append("\n");
-                            sb.append("target canExecute: ").append(target.canExecute()).append("\n");
                         }
                     } catch (Throwable t) {
                         sb.append("init symlink check error: ").append(t.getMessage()).append("\n");
@@ -415,7 +439,7 @@ new Thread(() -> {
                         byte[] magic = new byte[4];
                         if (fis.read(magic) == 4) {
                             sb.append("init ELF: ").append(String.format("%02x%02x%02x%02x", magic[0], magic[1], magic[2], magic[3]))
-                                    .append(magic[0] == 0x7f && magic[1] == 'E' ? " (valid)" : " (NOT ELF)").append("\n");
+                                    .append(magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F' ? " (valid ELF)" : " (NOT ELF)").append("\n");
                         }
                     }
                 }
@@ -451,7 +475,7 @@ new Thread(() -> {
                         }
                     }
                 } else {
-                    sb.append("(log.txt not found — init never started logging)\n");
+                    sb.append("(log.txt not found - init never started logging)\n");
                 }
             } catch (Throwable t) {
                 sb.append("log.txt read error: ").append(t.getMessage()).append("\n");
@@ -467,26 +491,65 @@ new Thread(() -> {
             appendCmdOutput(sb, new String[]{"logcat", "-d", "-b", "crash", "-v", "time"}, null);
             sb.append("\n");
 
-            // SELinux
+            // SELinux denials
             sb.append("=== SELinux denials ===\n");
             appendCmdOutput(sb, new String[]{"logcat", "-d", "-b", "events"}, "avc:");
+            appendCmdOutput(sb, new String[]{"dmesg"}, "avc:");
             sb.append("\n");
 
-            // 写入文件
-            try (FileOutputStream fos = new FileOutputStream(outFile)) {
-                fos.write(sb.toString().getBytes());
-            }
-
-            Log.i(TAG, "boot failure log: " + outFile.getAbsolutePath());
+            // Save to Downloads via MediaStore
+            savedPath = saveLogForUser("boot_fail_" + ts + ".txt", sb.toString());
+            Log.i(TAG, "boot failure log: " + (savedPath != null ? savedPath : "save failed"));
         } catch (Throwable e) {
             Log.e(TAG, "dumpBootFailureLogs failed", e);
             return "dump failed: " + e.getMessage();
         }
-        return outFile != null ? outFile.getAbsolutePath() : "unknown";
+        return savedPath != null ? savedPath : "save failed";
     }
 
-    private void dumpToSdcardRoot(String logContent) {
-        // 已经在 dumpBootFailureLogs 中写到 /sdcard，此方法留作备用
+    /**
+     * 保存日志到公共 Downloads (MediaStore API)。
+     */
+    private String saveLogForUser(String fileName, String content) {
+        if (Build.VERSION.SDK_INT >= 29) {
+            try {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
+                values.put(MediaStore.Downloads.MIME_TYPE, "text/plain");
+                values.put(MediaStore.Downloads.IS_PENDING, 1);
+                ContentResolver resolver = getContentResolver();
+                Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                if (uri != null) {
+                    try (OutputStream os = resolver.openOutputStream(uri)) {
+                        if (os != null) {
+                            os.write(content.getBytes());
+                            os.flush();
+                        }
+                    }
+                    values.clear();
+                    values.put(MediaStore.Downloads.IS_PENDING, 0);
+                    resolver.update(uri, values, null, null);
+                    Log.i(TAG, "log saved to MediaStore Downloads: " + uri);
+                    return "Downloads/" + fileName;
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "MediaStore save failed", t);
+            }
+        } else {
+            try {
+                File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                if (downloadsDir != null && (downloadsDir.exists() || downloadsDir.mkdirs())) {
+                    File pubFile = new File(downloadsDir, fileName);
+                    try (FileOutputStream fos = new FileOutputStream(pubFile)) {
+                        fos.write(content.getBytes());
+                    }
+                    return pubFile.getAbsolutePath();
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "public Downloads save failed", t);
+            }
+        }
+        return null;
     }
 
     private static void appendCmdOutput(StringBuilder sb, String[] cmd) {
