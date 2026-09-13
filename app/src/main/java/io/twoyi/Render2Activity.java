@@ -328,12 +328,15 @@ new Thread(() -> {
 
     private void dumpBootFailureLogs() {
         new Thread(() -> {
+            File outFile = null;
             try {
                 String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-                File appDir = getFilesDir();
-                File logDir = new File(appDir, "boot_logs");
-                logDir.mkdirs();
-                File outFile = new File(logDir, "boot_fail_" + ts + ".txt");
+
+                // 优先保存到 app 专属外存（无需权限，用户可通过文件管理器访问）
+                File externalFilesDir = getExternalFilesDir(null);
+                File accessibleDir = new File(externalFilesDir != null ? externalFilesDir : getFilesDir(), "boot_logs");
+                accessibleDir.mkdirs();
+                outFile = new File(accessibleDir, "boot_fail_" + ts + ".txt");
 
                 StringBuilder sb = new StringBuilder();
                 sb.append("=== twoyi boot failure log ===\n");
@@ -391,24 +394,12 @@ new Thread(() -> {
                 File socketDir = new File(getDataDir(), "socket");
                 sb.append("socket dir: ").append(socketDir.exists() ? "OK" : "MISSING").append("\n");
 
-                // 保存到 /storage/emulated/0/boot_logs/ 以便用户可直接访问
-                File publicLogDir = new File("/storage/emulated/0/boot_logs");
-                if (!publicLogDir.exists()) {
-                    publicLogDir.mkdirs();
-                }
-                File publicOutFile = new File(publicLogDir, "boot_fail_" + ts + ".txt");
-                try (FileOutputStream fos = new FileOutputStream(publicOutFile)) {
+                // 写入到实际保存路径
+                try (FileOutputStream fos = new FileOutputStream(outFile)) {
                     fos.write(sb.toString().getBytes());
-                } catch (Throwable t) {
-                    // 若没有外部存储权限或不可写，降级保存到 app 私有目录作为备份
-                    try (FileOutputStream fos = new FileOutputStream(outFile)) {
-                        fos.write(sb.toString().getBytes());
-                    } catch (Throwable ignored) {
-                    }
-                    Log.w(TAG, "cannot write to /storage/emulated/0, using app-private path", t);
                 }
 
-                String msg = "日志: " + publicOutFile.getAbsolutePath();
+                String msg = "日志: " + outFile.getAbsolutePath();
                 Log.i(TAG, msg);
                 runOnUiThread(() -> Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show());
             } catch (Throwable e) {
