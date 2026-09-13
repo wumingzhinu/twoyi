@@ -490,13 +490,13 @@ new Thread(() -> {
     }
 
     private static void appendCmdOutput(StringBuilder sb, String[] cmd, String filterContains) {
+        Process p = null;
         try {
-            Process p = Runtime.getRuntime().exec(cmd);
+            p = Runtime.getRuntime().exec(cmd);
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
                 String line;
                 int count = 0;
                 while ((line = reader.readLine()) != null) {
-                    // 如果指定了 filter，只输出包含 filter 的行
                     if (filterContains != null && !line.contains(filterContains)) {
                         continue;
                     }
@@ -510,6 +510,13 @@ new Thread(() -> {
             p.waitFor();
         } catch (Throwable e) {
             sb.append("(failed: ").append(e.getMessage()).append(")\n");
+            // Android 16 seccomp may kill subprocesses (e.g. dmesg) — don't let that crash the diagnostic
+        } finally {
+            if (p != null) {
+                try {
+                    p.destroy();
+                } catch (Throwable ignored) {}
+            }
         }
     }
 
