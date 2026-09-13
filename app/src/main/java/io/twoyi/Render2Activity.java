@@ -343,7 +343,17 @@ new Thread(() -> {
                 sb.append("time: ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date())).append("\n");
                 sb.append("device: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
                 sb.append("android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
-                sb.append("abi: ").append(Build.SUPPORTED_ABIs != null ? String.join(", ", Build.SUPPORTED_ABIs) : Build.CPU_ABI).append("\n");
+                // ABI info - use deprecated but API-1 fields to avoid lint errors
+                @SuppressWarnings("deprecation")
+                String[] abis = new String[]{Build.CPU_ABI, Build.CPU_ABI2};
+                StringBuilder abiStr = new StringBuilder();
+                for (String abi : abis) {
+                    if (abi != null && !abi.isEmpty()) {
+                        if (abiStr.length() > 0) abiStr.append(", ");
+                        abiStr.append(abi);
+                    }
+                }
+                sb.append("abi: ").append(abiStr.length() > 0 ? abiStr.toString() : "unknown").append("\n");
                 sb.append("fingerprint: ").append(Build.FINGERPRINT).append("\n\n");
 
                 // 容器日志（最关键）
