@@ -346,9 +346,6 @@ public final class RomManager {
             if (initInLib.exists() && initInLib.length() > 0) {
                 initSource = initInLib;
                 Log.i(TAG, "using APK-installed init: " + initInLib.getAbsolutePath());
-            } else if (initInLibFallback.exists() && initInLibFallback.length() > 0) {
-                initSource = initInLibFallback;
-                Log.i(TAG, "using fallback APK-installed init: " + initInLibFallback.getAbsolutePath());
             } else if (initInRootfs.exists() && initInRootfs.length() > 0) {
                 // 尝试复制到 nativeLibDir（Android 11+ 写入此位置通常被沙箱阻止）
                 try {
