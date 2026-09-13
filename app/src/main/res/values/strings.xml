@@ -6,6 +6,7 @@
 
 <resources>
     <string name="app_name">twoyi</string>
+    <string name="notices_title_str">Open Source Licenses</string>
     <string name="booting_tips">Booting twoyi…</string>
     <string name="extracting_tips">twoyi is initializing…</string>
     <string name="first_boot_tips">The first boot is a little slow, please wait…</string>

@@ -109,7 +109,7 @@ public class UIHelper {
     }
 
     public static AlertDialog.Builder getDialogBuilder(Context context) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(context, R.style.ThemeOverlay_MaterialComponents_MaterialAlertDialog);
+        AlertDialog.Builder builder = new AlertDialog.Builder(context, com.google.android.material.R.style.ThemeOverlay_MaterialComponents_MaterialAlertDialog);
         builder.setIcon(R.mipmap.ic_launcher);
         return builder;
     }
