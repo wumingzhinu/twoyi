@@ -19,7 +19,12 @@
 package io.twoyi;
 
 import android.app.Activity;
+import android.content.ContentResolver;
+import android.content.ContentValues;
+import android.net.Uri;
 import android.os.Build;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
@@ -46,6 +51,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -76,6 +82,9 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
     private View mBootLogView;
 
     private final AtomicBoolean mIsExtracting = new AtomicBoolean(false);
+
+    /** 启动失败重试计数，超过 3 次停止自动重试，避免无限循环 */
+    private final java.util.concurrent.atomic.AtomicInteger mBootFailCount = new java.util.concurrent.atomic.AtomicInteger(0);
 
     private final SurfaceHolder.Callback mSurfaceCallback = new SurfaceHolder.Callback() {
         @Override
@@ -268,14 +277,20 @@ new Thread(() -> {
 
             if (!success) {
                 LogEvents.trackBootFailure(getApplicationContext());
+                mBootFailCount.incrementAndGet();
                 dumpBootFailureLogs();
 
+                final boolean shouldRetry = mBootFailCount.get() <= 3;
                 runOnUiThread(() -> {
                     Toast.makeText(getApplicationContext(), R.string.boot_failed, Toast.LENGTH_LONG).show();
-                    mRootView.postDelayed(() -> {
-                        TwoyiStatusManager.getInstance().reset();
-                        bootSystem();
-                    }, 5000);
+                    if (shouldRetry) {
+                        mRootView.postDelayed(() -> {
+                            TwoyiStatusManager.getInstance().reset();
+                            bootSystem();
+                        }, 5000);
+                    } else {
+                        Log.e(TAG, "boot failed " + mBootFailCount.get() + " times, stop retrying. Check boot_logs in Downloads");
+                    }
                 });
                 return;
             }
@@ -518,18 +533,90 @@ new Thread(() -> {
                     sb.append("init check error: ").append(t.getMessage()).append("\n");
                 }
 
-                // 写入到实际保存路径
-                try (FileOutputStream fos = new FileOutputStream(outFile)) {
-                    fos.write(sb.toString().getBytes());
-                }
+                // 保存日志：优先写入公共 Downloads（用户可直接在文件管理器看到）
+                String fileName = "boot_fail_" + ts + ".txt";
+                String savedPath = saveLogForUser(fileName, sb.toString(), outFile);
 
-                String msg = "日志: " + outFile.getAbsolutePath();
+                String msg = (savedPath != null)
+                        ? "日志已保存: " + savedPath
+                        : "日志保存失败，请反馈给开发者";
                 Log.i(TAG, msg);
-                runOnUiThread(() -> Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show());
+                final String toastMsg = msg;
+                runOnUiThread(() -> Toast.makeText(getApplicationContext(), toastMsg, Toast.LENGTH_LONG).show());
             } catch (Throwable e) {
                 Log.e(TAG, "dumpBootFailureLogs failed", e);
+                runOnUiThread(() -> Toast.makeText(getApplicationContext(),
+                        "日志收集失败: " + e.getMessage(), Toast.LENGTH_LONG).show());
             }
         }, "dump-boot-log").start();
+    }
+
+    /**
+     * 保存启动失败日志到用户可访问的位置。
+     * 优先级：
+     *   1. Android 10+: MediaStore 写入公共 Downloads/（文件 App 可直接看到）
+     *   2. app 外部私有目录 /Android/data/io.twoyi/files/boot_logs/（部分文件管理器可见）
+     *   3. app 内部私有目录（兜底，仅 logcat 可查）
+     *
+     * @return 实际保存的路径描述，失败返回 null
+     */
+    private String saveLogForUser(String fileName, String content, File fallbackFile) {
+        // 1) Android 10+ 使用 MediaStore 写入 Downloads
+        if (Build.VERSION.SDK_INT >= 29) {
+            try {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Downloads.DISPLAY_NAME, fileName);
+                values.put(MediaStore.Downloads.MIME_TYPE, "text/plain");
+                values.put(MediaStore.Downloads.IS_PENDING, 1);
+                ContentResolver resolver = getContentResolver();
+                Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                if (uri != null) {
+                    try (OutputStream os = resolver.openOutputStream(uri)) {
+                        if (os != null) {
+                            os.write(content.getBytes());
+                            os.flush();
+                        }
+                    }
+                    values.clear();
+                    values.put(MediaStore.Downloads.IS_PENDING, 0);
+                    resolver.update(uri, values, null, null);
+                    Log.i(TAG, "log saved to MediaStore Downloads: " + uri);
+                    return "Download/" + fileName + " (文件 App 的下载目录)";
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "MediaStore save failed, falling back", t);
+            }
+        } else {
+            // Android 9 及以下：直接写公共 Downloads（需已授予存储权限；若无权限会抛异常并被捕获）
+            try {
+                File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                if (downloadsDir != null && (downloadsDir.exists() || downloadsDir.mkdirs())) {
+                    File pubFile = new File(downloadsDir, fileName);
+                    try (FileOutputStream fos = new FileOutputStream(pubFile)) {
+                        fos.write(content.getBytes());
+                    }
+                    return pubFile.getAbsolutePath();
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "public Downloads save failed, falling back", t);
+            }
+        }
+
+        // 2) app 外部私有目录
+        try {
+            if (fallbackFile != null) {
+                File parent = fallbackFile.getParentFile();
+                if (parent == null || parent.exists() || parent.mkdirs()) {
+                    try (FileOutputStream fos = new FileOutputStream(fallbackFile)) {
+                        fos.write(content.getBytes());
+                    }
+                    return fallbackFile.getAbsolutePath();
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "external files dir save failed", t);
+        }
+        return null;
     }
 
     private static void appendCmdOutput(StringBuilder sb, String[] cmd) {
