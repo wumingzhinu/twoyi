@@ -155,7 +155,7 @@ public final class RomManager {
 
     public static boolean romExist(Context context) {
         File initFile = new File(getRootfsDir(context), "init");
-        return initFile.exists();
+        return initFile.exists() && initFile.length() > 0;
     }
 
     public static boolean needsUpgrade(Context context) {
@@ -305,11 +305,53 @@ public final class RomManager {
                     }
                 }
             }
+
+            // Android 12+ 将应用数据目录挂载为 noexec，导致容器二进制无法执行。
+            // 解决方案：将 init 复制到 nativeLibraryDir（允许执行），然后用符号链接替换原位置。
+            ensureExecutableInNativeLib(context);
+
             Log.i(TAG, "extractRootfs done in " + (SystemClock.elapsedRealtime() - startTime) + "ms");
             return 0;
         } catch (Exception e) {
             Log.e(TAG, "extract rootfs failed", e);
             return -1;
+        }
+    }
+
+    /**
+     * Android 12+ 对应用数据目录启用 W^X，noexec 挂载阻止执行其中的二进制。
+     * 将 init 复制到 nativeLibraryDir 并用符号链接指回，使容器进程可以 exec。
+     */
+    private static void ensureExecutableInNativeLib(Context context) {
+        try {
+            ApplicationInfo ai = context.getApplicationInfo();
+            File nativeLibDir = new File(ai.nativeLibraryDir);
+            File rootfsDir = getRootfsDir(context);
+            File initInRootfs = new File(rootfsDir, "init");
+            File initInLib = new File(nativeLibDir, "twoyi_init");
+
+            if (!initInRootfs.exists()) {
+                Log.w(TAG, "init not found in rootfs, skip exec fix");
+                return;
+            }
+
+            // 1. 复制 init 到 nativeLibraryDir（该目录由系统创建，允许执行）
+            IOUtils.copyFile(initInRootfs, initInLib);
+            // 确保可执行权限
+            try {
+                initInLib.setExecutable(true, false);
+                initInLib.setReadable(true, false);
+            } catch (Throwable t) {
+                Log.w(TAG, "setExecutable failed on lib copy", t);
+            }
+            Log.i(TAG, "copied init to " + initInLib.getAbsolutePath());
+
+            // 2. 将 rootfs/init 替换为指向 lib 目录的符号链接
+            initInRootfs.delete();
+            android.system.Os.symlink(initInLib.getAbsolutePath(), initInRootfs.getAbsolutePath());
+            Log.i(TAG, "symlinked rootfs/init -> " + initInLib.getAbsolutePath());
+        } catch (Throwable t) {
+            Log.w(TAG, "ensureExecutableInNativeLib failed (boot may fail on Android 12+)", t);
         }
     }
 
