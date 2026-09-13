@@ -2,6 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+use jni::objects::JFloatArray;
+use jni::objects::JIntArray;
 use jni::objects::JValue;
 use jni::sys::{jclass, jfloat, jint, jobject, JNI_ERR, jstring};
 use jni::JNIEnv;
@@ -186,36 +188,54 @@ pub fn renderer_remove_window(env: JNIEnv, _clz: jclass, surface: jobject) {
 }
 
 #[no_mangle]
-pub fn handle_touch(env: JNIEnv, _clz: jclass, event: jobject) {
+pub fn native_handle_touch(
+    env: JNIEnv,
+    _clz: jclass,
+    action: jint,
+    pointer_index: jint,
+    pointer_count: jint,
+    x_arr: JFloatArray,
+    y_arr: JFloatArray,
+    pressure_arr: JFloatArray,
+    pointer_ids_arr: JIntArray,
+) {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // TODO: cache the field id.
-        let ptr = match env.get_field(event, "mNativePtr", "J") {
-            Ok(v) => v,
-            Err(e) => {
-                error!("handle_touch: get_field failed: {:?}", e);
-                return;
-            }
-        };
+        let count = pointer_count as usize;
+        let mut x_buf = vec![0.0f32; count];
+        let mut y_buf = vec![0.0f32; count];
+        let mut p_buf = vec![0.0f32; count];
+        let mut id_buf = vec![0i32; count];
 
-        if let JValue::Long(p) = ptr {
-            if p == 0 {
-                error!("handle_touch: mNativePtr is null");
-                return;
-            }
-            let nonptr = match unsafe { std::ptr::NonNull::new(std::mem::transmute::<i64, *mut ndk_sys::AInputEvent>(p)) } {
-                Some(p) => p,
-                None => {
-                    error!("handle_touch: transmuted pointer is null");
-                    return;
-                }
-            };
-            let ev = unsafe { ndk::event::MotionEvent::from_ptr(nonptr) };
-            input::handle_touch(ev)
+        if let Err(e) = env.get_float_array_region(&x_arr, 0, &mut x_buf) {
+            error!("native_handle_touch: get x failed: {:?}", e);
+            return;
         }
+        if let Err(e) = env.get_float_array_region(&y_arr, 0, &mut y_buf) {
+            error!("native_handle_touch: get y failed: {:?}", e);
+            return;
+        }
+        if let Err(e) = env.get_float_array_region(&pressure_arr, 0, &mut p_buf) {
+            error!("native_handle_touch: get pressure failed: {:?}", e);
+            return;
+        }
+        if let Err(e) = env.get_int_array_region(&pointer_ids_arr, 0, &mut id_buf) {
+            error!("native_handle_touch: get pointer_ids failed: {:?}", e);
+            return;
+        }
+
+        input::handle_touch_primitives(
+            action,
+            pointer_index as usize,
+            count,
+            &x_buf,
+            &y_buf,
+            &p_buf,
+            &id_buf,
+        );
     }));
 
     if let Err(e) = result {
-        error!("handle_touch: panicked: {:?}", e);
+        error!("native_handle_touch: panicked: {:?}", e);
     }
 }
 
@@ -290,7 +310,7 @@ unsafe fn JNI_OnLoad(jvm: JavaVM, _reserved: *mut c_void) -> jint {
             renderer_remove_window,
             "(Landroid/view/Surface;)V"
         ),
-        jni_method!(handleTouch, handle_touch, "(Landroid/view/MotionEvent;)V"),
+        jni_method!(nativeHandleTouch, native_handle_touch, "(III[F[F[F[I)V"),
         jni_method!(sendKeycode, send_key_code, "(I)V"),
     ];
 

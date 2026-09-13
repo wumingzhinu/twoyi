@@ -4,7 +4,7 @@
 
 use libc::*;
 use libc::{c_char, c_int};
-use ndk::event::{MotionAction, MotionEvent};
+use ndk::event::MotionAction;
 use std::mem;
 use std::thread;
 use std::{io::Write};
@@ -95,7 +95,15 @@ pub fn input_event_write(
     let _ = tx.send(ev);
 }
 
-pub fn handle_touch(ev: MotionEvent) {
+pub fn handle_touch_primitives(
+    action: i32,
+    pointer_index: usize,
+    pointer_count: usize,
+    x: &[f32],
+    y: &[f32],
+    pressure: &[f32],
+    pointer_ids: &[i32],
+) {
     let opt = match INPUT_SENDER.lock() {
         Ok(guard) => guard,
         Err(e) => {
@@ -104,27 +112,38 @@ pub fn handle_touch(ev: MotionEvent) {
         }
     };
     if let Some(ref fd) = *opt {
+        let motion_action = match action {
+            0 => MotionAction::Down,
+            1 => MotionAction::Up,
+            2 => MotionAction::Move,
+            3 => MotionAction::Cancel,
+            5 => MotionAction::PointerDown,
+            6 => MotionAction::PointerUp,
+            _ => {
+                info!("handle_touch: unknown action {}", action);
+                return;
+            }
+        };
 
-        let action = ev.action();
-        let pointer_index = ev.pointer_index();
-        let pointer = ev.pointer_at_index(pointer_index);
-        let pointer_id = pointer.pointer_id() as usize;
-        let pressure = pointer.pressure();
+        if pointer_index >= pointer_count {
+            info!("handle_touch: pointer_index {} >= pointer_count {}", pointer_index, pointer_count);
+            return;
+        }
+
+        let pointer_id = pointer_ids[pointer_index] as usize;
+        let cur_x = x[pointer_index];
+        let cur_y = y[pointer_index];
+        let cur_pressure = pressure[pointer_index];
 
         if pointer_id >= MAX_POINTERS {
             info!("handle_touch: pointer_id {} out of range", pointer_id);
             return;
         }
 
-        // info!("action: {:#?}, pointer_index: {}", action, pointer_index);
-
         static G_INPUT_MT: Lazy<Mutex<[i32;MAX_POINTERS]>> = Lazy::new(|| {std::sync::Mutex::new([0i32;MAX_POINTERS])});
 
-        match action {
+        match motion_action {
             MotionAction::Down | MotionAction::PointerDown => {
-                let x = pointer.x();
-                let y = pointer.y();
-
                 let mut mt = match G_INPUT_MT.lock() {
                     Ok(guard) => guard,
                     Err(_) => return,
@@ -134,6 +153,10 @@ pub fn handle_touch(ev: MotionEvent) {
                 let mut index = 0;
                 while index < MAX_POINTERS {
                     if mt[index] != 0 {
+                        let px = if index < pointer_count { x[index] } else { 0.0 };
+                        let py = if index < pointer_count { y[index] } else { 0.0 };
+                        let pp = if index < pointer_count { pressure[index] } else { 0.0 };
+
                         input_event_write(fd, EV_ABS, ABS_MT_SLOT, pointer_id as i32);
                         input_event_write(fd, EV_ABS, ABS_MT_TRACKING_ID, (pointer_id + 1) as i32);
 
@@ -142,11 +165,9 @@ pub fn handle_touch(ev: MotionEvent) {
                             input_event_write(fd, EV_KEY, BTN_TOOL_FINGER, 108);
                         }
 
-                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_X, x as i32);
-                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_Y, y as i32);
-
-                        input_event_write(fd, EV_ABS, ABS_MT_PRESSURE, pressure as i32);
-
+                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_X, px as i32);
+                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_Y, py as i32);
+                        input_event_write(fd, EV_ABS, ABS_MT_PRESSURE, pp as i32);
                         input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT);
                     }
                     index = index + 1;
@@ -177,16 +198,14 @@ pub fn handle_touch(ev: MotionEvent) {
                         Err(_) => return,
                     };
                     if mt[index] != 0 {
-                        let x = pointer.x();
-                        let y = pointer.y();
-                        let pressure = pointer.pressure();
+                        let px = if index < pointer_count { x[index] } else { 0.0 };
+                        let py = if index < pointer_count { y[index] } else { 0.0 };
+                        let pp = if index < pointer_count { pressure[index] } else { 0.0 };
 
                         input_event_write(fd, EV_ABS, ABS_MT_SLOT, index.try_into().unwrap());
-                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_X, x as i32);
-                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_Y, y as i32);
-
-                        input_event_write(fd, EV_ABS, ABS_MT_PRESSURE, pressure as i32);
-
+                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_X, px as i32);
+                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_Y, py as i32);
+                        input_event_write(fd, EV_ABS, ABS_MT_PRESSURE, pp as i32);
                         input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT);
                     }
 

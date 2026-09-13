@@ -37,7 +37,25 @@ public class Renderer {
 
     public static native void removeWindow(Surface surface);
 
-    public static native void handleTouch(MotionEvent event);
+    public static void handleTouch(MotionEvent event) {
+        int action = event.getActionMasked();
+        int pointerIndex = event.getActionIndex();
+        int pointerCount = event.getPointerCount();
+        float[] x = new float[pointerCount];
+        float[] y = new float[pointerCount];
+        float[] pressure = new float[pointerCount];
+        int[] pointerIds = new int[pointerCount];
+        for (int i = 0; i < pointerCount; i++) {
+            x[i] = event.getX(i);
+            y[i] = event.getY(i);
+            pressure[i] = event.getPressure(i);
+            pointerIds[i] = event.getPointerId(i);
+        }
+        nativeHandleTouch(action, pointerIndex, pointerCount, x, y, pressure, pointerIds);
+    }
+
+    private static native void nativeHandleTouch(int action, int pointerIndex, int pointerCount,
+            float[] x, float[] y, float[] pressure, int[] pointerIds);
 
     public static native void sendKeycode(int keycode);
 }
