@@ -7,7 +7,7 @@
 package io.twoyi.ui;
 
 import android.app.Activity;
-import android.app.ProgressDialog;
+import androidx.appcompat.app.AlertDialog;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
@@ -35,7 +35,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.file.Files;
 
 import io.twoyi.R;
 import io.twoyi.utils.AppKV;
@@ -180,8 +179,8 @@ public class SettingsActivity extends AppCompatActivity {
                 Context context = getActivity();
                 byte[] bugreport = LogEvents.getBugreport(context);
                 File tmpLog = new File(context.getCacheDir(), "bugreport.zip");
-                try {
-                    Files.write(tmpLog.toPath(), bugreport);
+                try (FileOutputStream fos = new FileOutputStream(tmpLog)) {
+                    fos.write(bugreport);
                 } catch (IOException e) {
                     Crashes.trackError(e);
                 }
@@ -222,8 +221,7 @@ public class SettingsActivity extends AppCompatActivity {
             }
 
             Activity activity = getActivity();
-            ProgressDialog dialog = UIHelper.getProgressDialog(activity);
-            dialog.setCancelable(false);
+            AlertDialog dialog = UIHelper.getProgressDialog(activity);
             dialog.show();
 
             // start copy 3rd rom

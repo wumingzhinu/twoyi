@@ -18,7 +18,6 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -84,6 +83,21 @@ public class LogEvents {
         public static ReportItem create(File file) {
             return create(file, file.getName());
         }
+    }
+
+    private static byte[] readAllBytes(File file) throws IOException {
+        if (file == null || !file.exists()) {
+            return new byte[0];
+        }
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (FileInputStream fis = new FileInputStream(file)) {
+            byte[] buffer = new byte[8192];
+            int len;
+            while ((len = fis.read(buffer)) > 0) {
+                baos.write(buffer, 0, len);
+            }
+        }
+        return baos.toByteArray();
     }
 
     public static byte[] getBugreport(Context context) {
@@ -171,7 +185,7 @@ public class LogEvents {
                 ZipEntry ze = new ZipEntry(item.entry);
                 zout.putNextEntry(ze);
 
-                byte[] bytes = Files.readAllBytes(item.file.toPath());
+                byte[] bytes = readAllBytes(item.file);
                 zout.write(bytes, 0, bytes.length);
 
                 zout.closeEntry();

@@ -854,7 +854,7 @@ public class ACache {
 			if (bm == null) {
 				return null;
 			}
-			return new BitmapDrawable(bm);
+			return new BitmapDrawable(android.content.res.Resources.getSystem(), bm);
 		}
 	}
 

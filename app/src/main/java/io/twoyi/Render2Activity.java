@@ -21,7 +21,6 @@ package io.twoyi;
 import android.app.Activity;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -38,6 +37,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.cleveroad.androidmanimation.LoadingAnimationView;
 
@@ -141,7 +141,7 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
         mLoadingLayout.setVisibility(View.VISIBLE);
         mLoadingView.startAnimation();
 
-        UITips.checkForAndroid12(this, this::bootSystem);
+        UITips.checkForAndroid12Plus(this, this::bootSystem);
 
         mSurfaceView.setOnTouchListener(this);
 
@@ -391,20 +391,24 @@ new Thread(() -> {
                 File socketDir = new File(getDataDir(), "socket");
                 sb.append("socket dir: ").append(socketDir.exists() ? "OK" : "MISSING").append("\n");
 
-                // 写入 app 私有目录（不需要权限）
-                try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                // 保存到 /storage/emulated/0/boot_logs/ 以便用户可直接访问
+                File publicLogDir = new File("/storage/emulated/0/boot_logs");
+                if (!publicLogDir.exists()) {
+                    publicLogDir.mkdirs();
+                }
+                File publicOutFile = new File(publicLogDir, "boot_fail_" + ts + ".txt");
+                try (FileOutputStream fos = new FileOutputStream(publicOutFile)) {
                     fos.write(sb.toString().getBytes());
+                } catch (Throwable t) {
+                    // 若没有外部存储权限或不可写，降级保存到 app 私有目录作为备份
+                    try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                        fos.write(sb.toString().getBytes());
+                    } catch (Throwable ignored) {
+                    }
+                    Log.w(TAG, "cannot write to /storage/emulated/0, using app-private path", t);
                 }
 
-                // 同时尝试复制到外部存储（方便用户导出）
-                File externalOut = new File(Environment.getExternalStorageDirectory(),
-                        "twoyi_boot_log_" + ts + ".txt");
-                try (FileOutputStream fos = new FileOutputStream(externalOut)) {
-                    fos.write(sb.toString().getBytes());
-                } catch (Throwable ignored) {
-                }
-
-                String msg = "日志: " + outFile.getAbsolutePath();
+                String msg = "日志: " + publicOutFile.getAbsolutePath();
                 Log.i(TAG, msg);
                 runOnUiThread(() -> Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show());
             } catch (Throwable e) {
@@ -460,6 +464,7 @@ new Thread(() -> {
         return super.onKeyDown(keyCode, event);
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public void onBackPressed() {
         // super.onBackPressed();

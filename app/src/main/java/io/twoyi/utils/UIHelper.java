@@ -11,7 +11,6 @@ import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
-import android.app.ProgressDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ComponentName;
@@ -82,7 +81,7 @@ public class UIHelper {
             if (cm == null) {
                 return;
             }
-            cm.setText(weixin);
+            cm.setPrimaryClip(ClipData.newPlainText("twoyi", weixin));
 
             Intent intent = new Intent(Intent.ACTION_MAIN);
             ComponentName cmp = new ComponentName("com.tencent.mm", "com.tencent.mm.ui.LauncherUI");
@@ -127,10 +126,12 @@ public class UIHelper {
         return dialogBuilder;
     }
 
-    public static ProgressDialog getProgressDialog(Context context) {
-        ProgressDialog dialog = new ProgressDialog(context);
-        dialog.setIcon(R.mipmap.ic_launcher);
-        dialog.setTitle(R.string.progress_dialog_title);
+    public static AlertDialog getProgressDialog(Context context) {
+        // ProgressDialog is deprecated since API 26, use AlertDialog with progress style
+        AlertDialog dialog = getDialogBuilder(context)
+                .setMessage(R.string.progress_dialog_title)
+                .setCancelable(false)
+                .create();
         return dialog;
     }
 

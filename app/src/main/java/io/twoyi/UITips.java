@@ -25,9 +25,22 @@ public class UITips {
      * @return 返回 true 代表不是 Android 12，或者允许用户启动
      */
     public static boolean checkForAndroid12(Activity activity, Runnable bootCallback) {
+        return checkForAndroid12Plus(activity, bootCallback);
+    }
+
+    public static boolean checkForAndroid12Plus(Activity activity, Runnable bootCallback) {
         boolean showTips = AppKV.getBooleanConfig(activity, AppKV.SHOW_ANDROID12_TIPS, true);
 
+        // Android 12 (API 31) requires explicit exported declarations
+        // Android 13+ (API 33) requires POST_NOTIFICATIONS runtime permission
+        // Android 14+ (API 34) requires foregroundServiceType in manifest
+        // Android 15+ (API 35) enforces edge-to-edge by default
+        // Android 16 (API 36) requires latest target SDK features
         if (!RomManager.isAndroid12() || !showTips) {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                handleAndroid13PlusPermission(activity, bootCallback);
+                return true;
+            }
             bootCallback.run();
             return true;
         }
@@ -50,6 +63,14 @@ public class UITips {
                 .show();
 
         return false;
+    }
+
+    private static void handleAndroid13PlusPermission(Activity activity, Runnable callback) {
+        // On Android 13+, POST_NOTIFICATIONS is needed if notifications are shown
+        // For now, just proceed with boot
+        if (callback != null) {
+            callback.run();
+        }
     }
 
     private static void confirmForAndroid12(Activity activity, Runnable callback) {

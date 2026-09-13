@@ -7,7 +7,6 @@
 package io.twoyi.ui;
 
 import android.app.Activity;
-import android.app.ProgressDialog;
 import android.content.ClipData;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -178,8 +177,7 @@ public class SelectAppActivity extends AppCompatActivity {
             return;
         }
 
-        ProgressDialog progressDialog = UIHelper.getProgressDialog(this);
-        progressDialog.setCancelable(false);
+        AlertDialog progressDialog = UIHelper.getProgressDialog(this);
         progressDialog.show();
 
         for (AppItem pkg : pkgs) {
@@ -336,8 +334,7 @@ public class SelectAppActivity extends AppCompatActivity {
 
         }
 
-        ProgressDialog dialog = UIHelper.getProgressDialog(this);
-        dialog.setCancelable(false);
+        AlertDialog dialog = UIHelper.getProgressDialog(this);
         dialog.show();
 
         // start copy and install
@@ -385,7 +382,7 @@ public class SelectAppActivity extends AppCompatActivity {
         return files;
     }
 
-    private void startInstall(List<File> result, ProgressDialog dialog, boolean cleanFile) {
+    private void startInstall(List<File> result, AlertDialog dialog, boolean cleanFile) {
         Installer.installAsync(getApplicationContext(), result, new Installer.InstallResult() {
             @Override
             public void onSuccess(List<File> files) {

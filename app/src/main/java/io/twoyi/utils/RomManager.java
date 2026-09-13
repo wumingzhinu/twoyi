@@ -32,10 +32,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.Writer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.TimeZone;
@@ -105,12 +101,13 @@ public final class RomManager {
     }
 
     private static void createLoaderSymlink(Context context) {
-        Path loaderSymlink = new File(context.getDataDir(), "loader64").toPath();
+        File loaderSymlinkFile = new File(context.getDataDir(), "loader64");
+        String loaderSymlink = loaderSymlinkFile.getAbsolutePath();
         String loaderPath = getLoaderPath(context);
         try {
-            Files.deleteIfExists(loaderSymlink);
-            Files.createSymbolicLink(loaderSymlink, Paths.get(loaderPath));
-        } catch (IOException e) {
+            loaderSymlinkFile.delete();
+            android.system.Os.symlink(loaderPath, loaderSymlink);
+        } catch (Exception e) {
             throw new RuntimeException("symlink loader failed.", e);
         }
     }
@@ -124,7 +121,10 @@ public final class RomManager {
         File lastKmsgFile = LogEvents.getLastKmsgFile(context);
         File kmsgFile = LogEvents.getKmsgFile(context);
         try {
-            Files.move(kmsgFile.toPath(), lastKmsgFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            if (kmsgFile.exists()) {
+                IOUtils.copyFile(kmsgFile, lastKmsgFile);
+                kmsgFile.delete();
+            }
         } catch (IOException ignored) {
         }
     }
