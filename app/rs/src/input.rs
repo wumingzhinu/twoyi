@@ -282,7 +282,9 @@ fn touch_server(width: i32, height: i32) {
                 let _ = stream.write_all(unsafe { any_as_u8_slice(&device) });
 
                 let (tx, rx) = channel::<input_event>();
-                *INPUT_SENDER.lock().unwrap() = Some(tx);
+                if let Ok(mut guard) = INPUT_SENDER.lock() {
+                    *guard = Some(tx);
+                }
 
                 thread::spawn(move || loop {
                     let ret = rx.recv();
@@ -347,7 +349,9 @@ fn key_server() {
                 let _ = stream.write_all(unsafe { any_as_u8_slice(&device) });
 
                 let (tx, rx) = channel::<input_event>();
-                *KEY_SENDER.lock().unwrap() = Some(tx);
+                if let Ok(mut guard) = KEY_SENDER.lock() {
+                    *guard = Some(tx);
+                }
 
                 thread::spawn(move || loop {
                     let ret = rx.recv();

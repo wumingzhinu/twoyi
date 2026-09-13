@@ -47,6 +47,22 @@ pub fn renderer_init(
     ydpi: jfloat,
     fps: jint,
 ) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        renderer_init_inner(&env, surface, loader, xdpi, ydpi, fps);
+    }));
+    if let Err(e) = result {
+        error!("renderer_init: panicked: {:?}", e);
+    }
+}
+
+fn renderer_init_inner(
+    env: &JNIEnv,
+    surface: jobject,
+    loader: jstring,
+    xdpi: jfloat,
+    ydpi: jfloat,
+    fps: jint,
+) {
     debug!("renderer_init");
     let window = unsafe { ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface) };
 
@@ -212,8 +228,20 @@ pub fn send_key_code(_env: JNIEnv, _clz: jclass, keycode: jint) {
 }
 
 unsafe fn register_natives(jvm: &JavaVM, class_name: &str, methods: &[NativeMethod]) -> jint {
-    let env: JNIEnv = jvm.get_env().unwrap();
-    let jni_version = env.get_version().unwrap();
+    let env: JNIEnv = match jvm.get_env() {
+        Ok(e) => e,
+        Err(e) => {
+            error!("register_natives: get_env failed: {:?}", e);
+            return JNI_ERR;
+        }
+    };
+    let jni_version = match env.get_version() {
+        Ok(v) => v,
+        Err(e) => {
+            error!("register_natives: get_version failed: {:?}", e);
+            return JNI_ERR;
+        }
+    };
     let version: jint = jni_version.into();
 
     debug!("JNI Version : {:#?} ", jni_version);
