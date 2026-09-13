@@ -443,6 +443,19 @@ new Thread(() -> {
                         sb.append("init can read: ").append(initFile.canRead()).append("\n");
                         sb.append("init can execute: ").append(initFile.canExecute()).append("\n");
                         sb.append("init size: ").append(initFile.length()).append(" bytes\n");
+                        sb.append("init is symlink: ");
+                        try {
+                            String cannonical = initFile.getCanonicalPath();
+                            String absolute = initFile.getAbsolutePath();
+                            sb.append(!cannonical.equals(absolute)).append("\n");
+                            if (!cannonical.equals(absolute)) {
+                                sb.append("init symlink target: ").append(cannonical).append("\n");
+                                File target = new File(cannonical);
+                                sb.append("target can execute: ").append(target.canExecute()).append("\n");
+                            }
+                        } catch (Throwable t) {
+                            sb.append("check error: ").append(t.getMessage()).append("\n");
+                        }
                         // Try Detect if it's a valid ELF
                         try (FileInputStream fis = new FileInputStream(initFile)) {
                             byte[] magic = new byte[4];
