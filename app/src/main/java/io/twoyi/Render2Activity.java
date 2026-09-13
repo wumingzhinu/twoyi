@@ -431,6 +431,23 @@ new Thread(() -> {
                 sb.append("rootfsDir: ").append(rootfsDir.getAbsolutePath()).append("\n");
                 sb.append("\n");
 
+                // 检查 nativeLibDir 中的 twoyi_init
+                try {
+                    String nativeLibDir = getApplicationInfo().nativeLibraryDir;
+                    File twoyiInit = new File(nativeLibDir, "twoyi_init");
+                    sb.append("=== nativeLibDir twoyi_init ===\n");
+                    sb.append("path: ").append(twoyiInit.getAbsolutePath()).append("\n");
+                    sb.append("exists: ").append(twoyiInit.exists()).append("\n");
+                    if (twoyiInit.exists()) {
+                        sb.append("size: ").append(twoyiInit.length()).append("\n");
+                        sb.append("canExecute: ").append(twoyiInit.canExecute()).append("\n");
+                        sb.append("canRead: ").append(twoyiInit.canRead()).append("\n");
+                    }
+                    sb.append("\n");
+                } catch (Throwable t) {
+                    sb.append("twoyi_init check failed: ").append(t.getMessage()).append("\n\n");
+                }
+
                 // 检查 socket 目录
                 File socketDir = new File(getDataDir(), "socket");
                 sb.append("socket dir: ").append(socketDir.exists() ? "OK" : "MISSING").append("\n");

@@ -373,6 +373,10 @@ public final class RomManager {
                     Log.i(TAG, "rootfs/init already at executable path");
                     return;
                 }
+                // 检测循环 symlink（指向自身）
+                if (cannonical.equals(initInRootfs.getAbsolutePath())) {
+                    Log.w(TAG, "circular symlink detected! forcing re-link");
+                }
             } catch (Throwable t) {
                 // file might not exist, proceed to create symlink
             }
@@ -381,8 +385,24 @@ public final class RomManager {
             try {
                 initInRootfs.delete();
             } catch (Throwable ignored) {}
-            android.system.Os.symlink(initSource.getAbsolutePath(), initInRootfs.getAbsolutePath());
-            Log.i(TAG, "symlinked rootfs/init -> " + initSource.getAbsolutePath());
+            try {
+                android.system.Os.symlink(initSource.getAbsolutePath(), initInRootfs.getAbsolutePath());
+                Log.i(TAG, "symlinked rootfs/init -> " + initSource.getAbsolutePath());
+            } catch (Throwable t) {
+                Log.e(TAG, "symlink creation failed", t);
+            }
+
+            // 验证 symlink 是否正确
+            try {
+                String verify = initInRootfs.getCanonicalPath();
+                if (!verify.equals(initSource.getAbsolutePath())) {
+                    Log.e(TAG, "symlink verification FAILED: got " + verify + " expected " + initSource.getAbsolutePath());
+                } else {
+                    Log.i(TAG, "symlink verified OK: " + verify);
+                }
+            } catch (Throwable t) {
+                Log.e(TAG, "symlink verification error", t);
+            }
         } catch (Throwable t) {
             Log.w(TAG, "ensureExecutableInNativeLib failed", t);
         }

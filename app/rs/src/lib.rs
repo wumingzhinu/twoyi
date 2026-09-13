@@ -132,21 +132,46 @@ fn renderer_init_inner(
                 return;
             }
         };
-        match Command::new("./init")
-            .current_dir(working_dir)
-            .env("TYLOADER", loader_path)
-            .stdout(Stdio::from(outputs))
-            .stderr(Stdio::from(errors))
-            .spawn()
-        {
-            Ok(child) => {
-                info!("init process started, pid: {}", child.id());
-                // 启动后立即给子进程更多执行机会
-                std::thread::sleep(std::time::Duration::from_millis(100));
+        // Android 12+ data 目录 noexec：先尝试 ./init（symlink 到 nativeLibDir），
+        // 若失败则从 TYLOADER 路径推导 nativeLibDir 直接执行 twoyi_init
+        let init_candidates = {
+            let mut candidates: Vec<String> = vec![
+                format!("{}/init", working_dir),
+            ];
+            // 从 loader_path 推导 nativeLibDir: .../lib/arm64/libloader.so -> .../lib/arm64/
+            if let Some(parent) = std::path::Path::new(&loader_path).parent() {
+                candidates.push(format!("{}/twoyi_init", parent.display()));
             }
-            Err(e) => {
-                error!("failed to start init process: {}", e);
+            candidates
+        };
+
+        let mut spawned = false;
+        for init_path in &init_candidates {
+            info!("trying init: {}", init_path);
+            match Command::new(init_path)
+                .current_dir(working_dir)
+                .env("TYLOADER", &loader_path)
+                .stdout(Stdio::from(outputs.try_clone().unwrap_or_else(|_| {
+                    // 不应该到这里，但以防万一
+                    Stdio::null()
+                })))
+                .stderr(Stdio::from(errors.try_clone().unwrap_or_else(|_| Stdio::null())))
+                .spawn()
+            {
+                Ok(child) => {
+                    info!("init process started from {}, pid: {}", init_path, child.id());
+                    spawned = true;
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    break;
+                }
+                Err(e) => {
+                    error!("failed to start init from {}: {}", init_path, e);
+                }
             }
+        }
+
+        if !spawned {
+            error!("all init candidates failed, boot will timeout");
         }
     }
 }
