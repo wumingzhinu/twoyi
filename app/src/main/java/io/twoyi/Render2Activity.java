@@ -342,7 +342,9 @@ new Thread(() -> {
                 sb.append("=== twoyi boot failure log ===\n");
                 sb.append("time: ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date())).append("\n");
                 sb.append("device: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
-                sb.append("android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n\n");
+                sb.append("android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
+                sb.append("abi: ").append(Build.SUPPORTED_ABIs != null ? String.join(", ", Build.SUPPORTED_ABIs) : Build.CPU_ABI).append("\n");
+                sb.append("fingerprint: ").append(Build.FINGERPRINT).append("\n\n");
 
                 // 容器日志（最关键）
                 sb.append("=== container log.txt ===\n");
@@ -360,39 +362,91 @@ new Thread(() -> {
                         }
                     }
                 } else {
-                    sb.append("(log.txt not found — container never started)\n");
+                    sb.append("(log.txt not found — container init never started logging)\n");
                 }
                 sb.append("\n");
 
-                // logcat: io.twoyi 相关
-                sb.append("=== logcat (io.twoyi) ===\n");
-                appendCmdOutput(sb, new String[]{
-                        "logcat", "-d", "-v", "time",
-                        "-s", "io.twoyi:*", "RomManager:*", "TwoyiStatus:*", "TwoyiSocketServer:*",
-                        "Render2Activity:*", "Renderer:*"
-                });
+                // 从 libloader.so 检查原生库
+                sb.append("=== native lib check ===\n");
+                try {
+                    String nativeDir = getApplicationInfo().nativeLibraryDir;
+                    sb.append("nativeLibraryDir: ").append(nativeDir).append("\n");
+                    File libloader = new File(nativeDir, "libloader.so");
+                    sb.append("libloader.so in nativeDir: ").append(libloader.exists() ? "OK (" + libloader.length() + " bytes)" : "MISSING").append("\n");
+                    File libadb = new File(nativeDir, "libadb.so");
+                    sb.append("libadb.so in nativeDir: ").append(libadb.exists() ? "OK (" + libadb.length() + " bytes)" : "MISSING").append("\n");
+                } catch (Throwable t) {
+                    sb.append("native lib check error: ").append(t.getMessage()).append("\n");
+                }
                 sb.append("\n");
 
-                // logcat: native crash / init / linker
-                sb.append("=== logcat (native/init/linker) ===\n");
+                // logcat: 完整 io.twoyi（不 filter）
+                sb.append("=== logcat (all io.twoyi) ===\n");
                 appendCmdOutput(sb, new String[]{
-                        "logcat", "-d", "-v", "time",
-                        "-s", "DEBUG:*", "linker:*", "init:*", "libc:*"
-                });
+                        "logcat", "-d", "-v", "time"
+                }, "io.twoyi");
+                sb.append("\n");
+
+                // logcat: crash buffer（包含 native crash / tombstone / fatal）
+                sb.append("=== logcat (crash/fatal) ===\n");
+                appendCmdOutput(sb, new String[]{
+                        "logcat", "-d", "-b", "crash", "-v", "time"
+                }, null);
+                sb.append("\n");
+
+                // logcat: all fatal level
+                sb.append("=== logcat (fatal level) ===\n");
+                appendCmdOutput(sb, new String[]{
+                        "logcat", "-d", "-v", "time", "*:F"
+                }, null);
+                sb.append("\n");
+
+                // SELinux denials
+                sb.append("=== SELinux denials ===\n");
+                appendCmdOutput(sb, new String[]{
+                        "logcat", "-d", "-b", "events"
+                }, "avc:");
+                appendCmdOutput(sb, new String[]{
+                        "dmesg"
+                }, "avc:");
                 sb.append("\n");
 
                 // 检查容器关键文件是否存在
                 sb.append("=== container files check ===\n");
                 File rootfsDir = RomManager.getRootfsDir(getApplicationContext());
-                for (String name : new String[]{"init", "libloader.so", "rom.ini", "system", "vendor"}) {
+                for (String name : new String[]{"init", "rom.ini", "system", "vendor", "data"}) {
                     File f = new File(rootfsDir, name);
                     sb.append(name).append(": ").append(f.exists() ? "OK" : "MISSING").append("\n");
                 }
+                sb.append("rootfsDir: ").append(rootfsDir.getAbsolutePath()).append("\n");
                 sb.append("\n");
 
                 // 检查 socket 目录
                 File socketDir = new File(getDataDir(), "socket");
                 sb.append("socket dir: ").append(socketDir.exists() ? "OK" : "MISSING").append("\n");
+
+                // 尝试直接执行 init 检测是否有权限问题
+                sb.append("=== init exec test ===\n");
+                try {
+                    File initFile = new File(rootfsDir, "init");
+                    if (initFile.exists()) {
+                        sb.append("init can read: ").append(initFile.canRead()).append("\n");
+                        sb.append("init can execute: ").append(initFile.canExecute()).append("\n");
+                        sb.append("init size: ").append(initFile.length()).append(" bytes\n");
+                        // Try Detect if it's a valid ELF
+                        try (FileInputStream fis = new FileInputStream(initFile)) {
+                            byte[] magic = new byte[4];
+                            if (fis.read(magic) == 4) {
+                                sb.append("init ELF magic: ")
+                                        .append(String.format("%02x %02x %02x %02x", magic[0], magic[1], magic[2], magic[3]))
+                                        .append(magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F' ? " (valid ELF)" : " (NOT ELF)")
+                                        .append("\n");
+                            }
+                        }
+                    }
+                } catch (Throwable t) {
+                    sb.append("init check error: ").append(t.getMessage()).append("\n");
+                }
 
                 // 写入到实际保存路径
                 try (FileOutputStream fos = new FileOutputStream(outFile)) {
@@ -409,12 +463,20 @@ new Thread(() -> {
     }
 
     private static void appendCmdOutput(StringBuilder sb, String[] cmd) {
+        appendCmdOutput(sb, cmd, null);
+    }
+
+    private static void appendCmdOutput(StringBuilder sb, String[] cmd, String filterContains) {
         try {
             Process p = Runtime.getRuntime().exec(cmd);
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
                 String line;
                 int count = 0;
                 while ((line = reader.readLine()) != null) {
+                    // 如果指定了 filter，只输出包含 filter 的行
+                    if (filterContains != null && !line.contains(filterContains)) {
+                        continue;
+                    }
                     sb.append(line).append("\n");
                     if (++count > 500) {
                         sb.append("... (truncated)\n");
