@@ -96,6 +96,8 @@ public final class RomManager {
             ensureDir(new File(devDir, "input"));
             ensureDir(new File(devDir, "socket"));
             ensureDir(new File(devDir, "maps"));
+            // 确保 init 在 Android 12+ 的 noexec 数据目录上仍然可执行
+            ensureExecutableInNativeLib(context);
         } catch (Throwable ignored) {
         }
     }
@@ -322,6 +324,14 @@ public final class RomManager {
      * Android 12+ 对应用数据目录启用 W^X，noexec 挂载阻止执行其中的二进制。
      * 将 init 复制到 nativeLibraryDir 并用符号链接指回，使容器进程可以 exec。
      */
+    /**
+     * Android 12+ 对应用数据目录启用 W^X，noexec 挂载阻止执行其中的二进制。
+     * 将 rootfs/init 替换为指向 nativeLibraryDir 中副本的符号链接，使容器进程可以 exec。
+     *
+     * 同时处理两种来源：
+     *   - APK 构建时已将 init 放入 jniLibs/ 作为 twoyi_init，系统安装自动提取到 nativeLibDir（推荐路径）
+     *   - 运行时从 rootfs/init 尝试复制到 nativeLibDir（可能被 Android 11+ 沙箱阻止）
+     */
     private static void ensureExecutableInNativeLib(Context context) {
         try {
             ApplicationInfo ai = context.getApplicationInfo();
@@ -330,28 +340,51 @@ public final class RomManager {
             File initInRootfs = new File(rootfsDir, "init");
             File initInLib = new File(nativeLibDir, "twoyi_init");
 
-            if (!initInRootfs.exists()) {
-                Log.w(TAG, "init not found in rootfs, skip exec fix");
+            // 确定 init 来源
+            File initSource = null;
+            // 优先使用 APK 安装的副本（系统提取，保证可执行）
+            if (initInLib.exists() && initInLib.length() > 0) {
+                initSource = initInLib;
+                Log.i(TAG, "using APK-installed init: " + initInLib.getAbsolutePath());
+            } else if (initInRootfs.exists() && initInRootfs.length() > 0) {
+                // 尝试复制到 nativeLibDir（Android 11+ 写入此位置通常被沙箱阻止）
+                try {
+                    IOUtils.copyFile(initInRootfs, initInLib);
+                    initInLib.setExecutable(true, false);
+                    initInLib.setReadable(true, false);
+                    if (initInLib.exists() && initInLib.length() > 0) {
+                        initSource = initInLib;
+                        Log.i(TAG, "copied init to nativeLibDir: " + initInLib.getAbsolutePath());
+                    }
+                } catch (Throwable t) {
+                    Log.w(TAG, "cannot copy init to nativeLibDir, will try fallback", t);
+                }
+            }
+
+            if (initSource == null) {
+                Log.w(TAG, "no usable init found, boot may fail on Android 12+");
                 return;
             }
 
-            // 1. 复制 init 到 nativeLibraryDir（该目录由系统创建，允许执行）
-            IOUtils.copyFile(initInRootfs, initInLib);
-            // 确保可执行权限
+            // 检查 rootfs/init 是否已经指向正确位置
             try {
-                initInLib.setExecutable(true, false);
-                initInLib.setReadable(true, false);
+                String cannonical = initInRootfs.getCanonicalPath();
+                if (cannonical.equals(initSource.getAbsolutePath())) {
+                    Log.i(TAG, "rootfs/init already at executable path");
+                    return;
+                }
             } catch (Throwable t) {
-                Log.w(TAG, "setExecutable failed on lib copy", t);
+                // file might not exist, proceed to create symlink
             }
-            Log.i(TAG, "copied init to " + initInLib.getAbsolutePath());
 
-            // 2. 将 rootfs/init 替换为指向 lib 目录的符号链接
-            initInRootfs.delete();
-            android.system.Os.symlink(initInLib.getAbsolutePath(), initInRootfs.getAbsolutePath());
-            Log.i(TAG, "symlinked rootfs/init -> " + initInLib.getAbsolutePath());
+            // 创建符号链接 rootfs/init -> 可执行位置
+            try {
+                initInRootfs.delete();
+            } catch (Throwable ignored) {}
+            android.system.Os.symlink(initSource.getAbsolutePath(), initInRootfs.getAbsolutePath());
+            Log.i(TAG, "symlinked rootfs/init -> " + initSource.getAbsolutePath());
         } catch (Throwable t) {
-            Log.w(TAG, "ensureExecutableInNativeLib failed (boot may fail on Android 12+)", t);
+            Log.w(TAG, "ensureExecutableInNativeLib failed", t);
         }
     }
 
