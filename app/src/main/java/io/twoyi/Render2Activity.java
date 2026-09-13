@@ -286,9 +286,6 @@ new Thread(() -> {
                 mLoadingLayout.setVisibility(View.GONE);
             });
         }, "waiting-boot").start();
-
-        // 显示启动进度
-        startBootProgressMonitor();
     }
 
     /**
@@ -327,65 +324,6 @@ new Thread(() -> {
         } catch (Throwable ignored) {
         }
         return true;
-    }
-
-    /**
-     * 后台监控容器 log.txt，显示启动进度到 UI。
-     */
-    private void startBootProgressMonitor() {
-        new Thread(() -> {
-            File logFile = new File(getDataDir(), "log.txt");
-            long lastSize = 0;
-            long lastUpdate = SystemClock.uptimeMillis();
-
-            while (!TwoyiStatusManager.getInstance().isStarted()) {
-                try {
-                    Thread.sleep(3000);
-
-                    if (!logFile.exists()) {
-                        runOnUiThread(() -> mBootLogView.setText("Waiting for container..."));
-                        continue;
-                    }
-
-                    long size = logFile.length();
-                    if (size == lastSize && SystemClock.uptimeMillis() - lastUpdate > 10_000) {
-                        // 超过 10 秒无新日志
-                        runOnUiThread(() -> mBootLogView.setText("Container idle, waiting..."));
-                        continue;
-                    }
-
-                    if (size > lastSize) {
-                        // 读取最后几行
-                        String tail = readLogTail(logFile, 5);
-                        runOnUiThread(() -> mBootLogView.setText(tail));
-                        lastSize = size;
-                        lastUpdate = SystemClock.uptimeMillis();
-                    }
-                } catch (Throwable e) {
-                    Log.e(TAG, "boot progress monitor error", e);
-                }
-            }
-        }, "boot-progress").start();
-    }
-
-    private String readLogTail(File file, int maxLines) {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
-            List<String> lines = new ArrayList<>();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                lines.add(line);
-                if (lines.size() > maxLines) {
-                    lines.remove(0);
-                }
-            }
-            StringBuilder sb = new StringBuilder();
-            for (String l : lines) {
-                sb.append(l).append("\n");
-            }
-            return sb.toString().trim();
-        } catch (Throwable e) {
-            return "(cannot read log)";
-        }
     }
 
     private void dumpBootFailureLogs() {
