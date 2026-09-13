@@ -2,10 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use jni::objects::JFloatArray;
-use jni::objects::JIntArray;
 use jni::objects::JValue;
-use jni::sys::{jclass, jfloat, jint, jobject, JNI_ERR, jstring};
+use jni::sys::{jclass, jint, jobject, jfloatArray, jintArray, JNI_ERR, jstring};
 use jni::JNIEnv;
 use jni::{JavaVM, NativeMethod};
 use log::{error, info, Level, debug};
@@ -194,10 +192,10 @@ pub fn native_handle_touch(
     action: jint,
     pointer_index: jint,
     pointer_count: jint,
-    x_arr: JFloatArray,
-    y_arr: JFloatArray,
-    pressure_arr: JFloatArray,
-    pointer_ids_arr: JIntArray,
+    x_arr: jfloatArray,
+    y_arr: jfloatArray,
+    pressure_arr: jfloatArray,
+    pointer_ids_arr: jintArray,
 ) {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let count = pointer_count as usize;
@@ -206,19 +204,19 @@ pub fn native_handle_touch(
         let mut p_buf = vec![0.0f32; count];
         let mut id_buf = vec![0i32; count];
 
-        if let Err(e) = env.get_float_array_region(&x_arr, 0, &mut x_buf) {
+        if let Err(e) = env.get_float_array_region(x_arr, 0, &mut x_buf) {
             error!("native_handle_touch: get x failed: {:?}", e);
             return;
         }
-        if let Err(e) = env.get_float_array_region(&y_arr, 0, &mut y_buf) {
+        if let Err(e) = env.get_float_array_region(y_arr, 0, &mut y_buf) {
             error!("native_handle_touch: get y failed: {:?}", e);
             return;
         }
-        if let Err(e) = env.get_float_array_region(&pressure_arr, 0, &mut p_buf) {
+        if let Err(e) = env.get_float_array_region(pressure_arr, 0, &mut p_buf) {
             error!("native_handle_touch: get pressure failed: {:?}", e);
             return;
         }
-        if let Err(e) = env.get_int_array_region(&pointer_ids_arr, 0, &mut id_buf) {
+        if let Err(e) = env.get_int_array_region(pointer_ids_arr, 0, &mut id_buf) {
             error!("native_handle_touch: get pointer_ids failed: {:?}", e);
             return;
         }
