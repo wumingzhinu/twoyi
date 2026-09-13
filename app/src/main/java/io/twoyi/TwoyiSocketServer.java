@@ -89,21 +89,34 @@ public class TwoyiSocketServer {
     private void start0() {
         LocalSocket socket = null;
         try {
-            socket = new LocalSocket(LocalSocket.SOCKET_SEQPACKET);
+            // 先尝试 SEQPACKET，失败则回退到 STREAM
+            try {
+                socket = new LocalSocket(LocalSocket.SOCKET_SEQPACKET);
+                Log.i(TAG, "using SEQPACKET socket");
+            } catch (Throwable e) {
+                Log.w(TAG, "SEQPACKET not available, falling back to STREAM: " + e.getMessage());
+                socket = new LocalSocket(LocalSocket.SOCKET_STREAM);
+                Log.i(TAG, "using STREAM socket");
+            }
+
             socket.bind(new LocalSocketAddress(SOCK_NAME, LocalSocketAddress.Namespace.ABSTRACT));
+            Log.i(TAG, "socket bound to @" + SOCK_NAME);
             LocalServerSocket localServerSocket = new LocalServerSocket(socket.getFileDescriptor());
+            Log.i(TAG, "LocalServerSocket created, waiting for connections");
 
             Thread currentThread = Thread.currentThread();
+            int acceptCount = 0;
             while (!currentThread.isInterrupted()) {
                 LocalSocket localSocket = localServerSocket.accept();
+                acceptCount++;
+                Log.i(TAG, "accepted connection #" + acceptCount + " from " + localSocket);
                 handleSocket(localSocket);
             }
         } catch (IOException e) {
-            Log.e(TAG, "start socket failed", e);
+            Log.e(TAG, "start socket failed: " + e.getMessage(), e);
 
             mStarted.set(false);
 
-            // start it again
             SystemClock.sleep(1000);
 
             start();
@@ -133,14 +146,13 @@ public class TwoyiSocketServer {
     }
 
     private void handleData(String msg) {
+        Log.i(TAG, "received: " + msg);
         if (msg.startsWith(SWITCH_HOST)) {
-            // switch host system
             TwoyiStatusManager.getInstance().switchOs(mContext);
         } else if (msg.startsWith(BOOT_COMPLETED)) {
-            // machine started
+            Log.i(TAG, "BOOT_COMPLETED received!");
             TwoyiStatusManager.getInstance().markStarted();
         } else if (msg.startsWith(JUMP_HOST_SETTINGS)) {
-            // UIHelper.startActivity(mContext, AboutActivity.class);
             UIHelper.startActivity(mContext, SettingsActivity.class);
         }
     }

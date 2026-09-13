@@ -86,29 +86,20 @@ public final class RomManager {
     }
 
     public static void ensureBootFiles(Context context) {
-
-        // <rootdir>/dev/
-        File devDir = new File(getRootfsDir(context), "dev");
-        ensureDir(new File(devDir, "input"));
-        ensureDir(new File(devDir, "socket"));
-        ensureDir(new File(devDir, "maps"));
-
-        ensureDir(new File(context.getDataDir(), "socket"));
-
-        createLoaderSymlink(context);
-
-        // killOrphanProcess 会执行 shell 命令，非常耗时且危险（杀死系统孤儿进程），
-        // 已从启动路径移除，避免阻塞启动
-        // killOrphanProcess();
-
+        // 关键目录已在 ensureLoaderReady 同步创建，这里只做非关键操作
         saveLastKmsg(context);
     }
 
-    // 轻量级同步方法：只准备 loader symlink 等启动必需项，避免在 attachBaseContext 中阻塞
+    // 轻量级同步方法：准备所有容器启动必需的文件和目录
     public static void ensureLoaderReady(Context context) {
         try {
             createLoaderSymlink(context);
             ensureDir(new File(context.getDataDir(), "socket"));
+            // 容器启动必需的目录（同步创建，避免竞态）
+            File devDir = new File(getRootfsDir(context), "dev");
+            ensureDir(new File(devDir, "input"));
+            ensureDir(new File(devDir, "socket"));
+            ensureDir(new File(devDir, "maps"));
         } catch (Throwable ignored) {
         }
     }

@@ -19,7 +19,9 @@
 package io.twoyi;
 
 import android.app.Activity;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -41,10 +43,13 @@ import com.cleveroad.androidmanimation.LoadingAnimationView;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -190,7 +195,7 @@ new Thread(() -> {
                         ((ViewGroup) mSurfaceView.getParent()).removeView(mSurfaceView);
                     }
                     mRootView.addView(mSurfaceView, 0);
-                    showBootingProcedure();
+                    showBootingProcedure(true);
                 });
             }, "extract-rom").start();
         } else {
@@ -198,7 +203,7 @@ new Thread(() -> {
                 ((ViewGroup) mSurfaceView.getParent()).removeView(mSurfaceView);
             }
             mRootView.addView(mSurfaceView, 0);
-            showBootingProcedure();
+            showBootingProcedure(false);
         }
     }
 
@@ -223,16 +228,41 @@ new Thread(() -> {
         }, 15 * 1000);
     }
 
-    private void showBootingProcedure() {
-        // mLoadingText.setText(R.string.booting_tips);
+    private void showBootingProcedure(boolean coldBoot) {
         mLoadingText.setVisibility(View.GONE);
         mBootLogView.setVisibility(View.VISIBLE);
-        new Thread(() -> {
 
+        // 自适应超时：冷启动（首次解压后）给更长时间
+        int timeoutSeconds = coldBoot ? 180 : 60;
+
+        new Thread(() -> {
             boolean success = false;
+            int elapsed = 0;
+            int pollInterval = 5; // 每5秒检查一次容器健康状态
+
             try {
-                // 给内部系统足够的启动时间（120秒），较新的设备启动更慢
-                success = TwoyiStatusManager.getInstance().waitBoot(120, TimeUnit.SECONDS);
+                while (elapsed < timeoutSeconds) {
+                    if (TwoyiStatusManager.getInstance().isStarted()) {
+                        success = true;
+                        break;
+                    }
+
+                    if (elapsed % pollInterval == 0 && elapsed > 0) {
+                        // 监控容器进程：如果 init 已死，立即失败
+                        if (!isContainerAlive()) {
+                            Log.e(TAG, "container process died at " + elapsed + "s");
+                            break;
+                        }
+                    }
+
+                    Thread.sleep(pollInterval * 1000);
+                    elapsed += pollInterval;
+                }
+
+                if (!TwoyiStatusManager.getInstance().isStarted() && !success) {
+                    // 最后一次尝试：短等
+                    success = TwoyiStatusManager.getInstance().waitBoot(5, TimeUnit.SECONDS);
+                }
             } catch (Throwable ignored) {
             }
 
@@ -240,40 +270,165 @@ new Thread(() -> {
                 LogEvents.trackBootFailure(getApplicationContext());
                 dumpBootFailureLogs();
 
-                // 不直接闪退，而是给出友好提示并延迟重试
                 runOnUiThread(() -> {
                     Toast.makeText(getApplicationContext(), R.string.boot_failed, Toast.LENGTH_LONG).show();
-                    // 3秒后回到主线程重试
                     mRootView.postDelayed(() -> {
                         TwoyiStatusManager.getInstance().reset();
                         bootSystem();
-                    }, 3000);
+                    }, 5000);
                 });
                 return;
             }
 
+            Log.i(TAG, "boot completed in " + elapsed + "s");
             runOnUiThread(() -> {
                 mLoadingView.stopAnimation();
                 mLoadingLayout.setVisibility(View.GONE);
             });
         }, "waiting-boot").start();
+
+        // 显示启动进度
+        startBootProgressMonitor();
+    }
+
+    /**
+     * 检查容器 init 进程是否仍在运行。
+     * 如果容器崩溃，立即失败而不是等待完整超时。
+     */
+    private boolean isContainerAlive() {
+        try {
+            File logFile = new File(getDataDir(), "log.txt");
+            if (!logFile.exists()) {
+                // log.txt 还没创建，init 可能还在启动中
+                return true;
+            }
+
+            long now = SystemClock.uptimeMillis();
+            long lastModified = logFile.lastModified();
+
+            // log.txt 超过 90 秒没有更新 → 可能卡死
+            if (now - lastModified > 90_000) {
+                // 检查 init 进程是否还在
+                Process p = Runtime.getRuntime().exec(new String[]{"sh", "-c", "ps -ef"});
+                BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.contains("rootfs/init") || line.contains("/init ")) {
+                        reader.close();
+                        p.waitFor();
+                        return true;
+                    }
+                }
+                reader.close();
+                p.waitFor();
+                Log.e(TAG, "container init process not found, log.txt stale for " + (now - lastModified) / 1000 + "s");
+                return false;
+            }
+        } catch (Throwable ignored) {
+        }
+        return true;
+    }
+
+    /**
+     * 后台监控容器 log.txt，显示启动进度到 UI。
+     */
+    private void startBootProgressMonitor() {
+        new Thread(() -> {
+            File logFile = new File(getDataDir(), "log.txt");
+            long lastSize = 0;
+            long lastUpdate = SystemClock.uptimeMillis();
+
+            while (!TwoyiStatusManager.getInstance().isStarted()) {
+                try {
+                    Thread.sleep(3000);
+
+                    if (!logFile.exists()) {
+                        runOnUiThread(() -> mBootLogView.setText("Waiting for container..."));
+                        continue;
+                    }
+
+                    long size = logFile.length();
+                    if (size == lastSize && SystemClock.uptimeMillis() - lastUpdate > 10_000) {
+                        // 超过 10 秒无新日志
+                        runOnUiThread(() -> mBootLogView.setText("Container idle, waiting..."));
+                        continue;
+                    }
+
+                    if (size > lastSize) {
+                        // 读取最后几行
+                        String tail = readLogTail(logFile, 5);
+                        runOnUiThread(() -> mBootLogView.setText(tail));
+                        lastSize = size;
+                        lastUpdate = SystemClock.uptimeMillis();
+                    }
+                } catch (Throwable e) {
+                    Log.e(TAG, "boot progress monitor error", e);
+                }
+            }
+        }, "boot-progress").start();
+    }
+
+    private String readLogTail(File file, int maxLines) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(file)))) {
+            List<String> lines = new ArrayList<>();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                lines.add(line);
+                if (lines.size() > maxLines) {
+                    lines.remove(0);
+                }
+            }
+            StringBuilder sb = new StringBuilder();
+            for (String l : lines) {
+                sb.append(l).append("\n");
+            }
+            return sb.toString().trim();
+        } catch (Throwable e) {
+            return "(cannot read log)";
+        }
     }
 
     private void dumpBootFailureLogs() {
         new Thread(() -> {
             try {
                 String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-                File outFile = new File("/storage/emulated/0", "twoyi_boot_log_" + ts + ".txt");
+                File appDir = getFilesDir();
+                File logDir = new File(appDir, "boot_logs");
+                logDir.mkdirs();
+                File outFile = new File(logDir, "boot_fail_" + ts + ".txt");
 
                 StringBuilder sb = new StringBuilder();
                 sb.append("=== twoyi boot failure log ===\n");
-                sb.append("time: ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date())).append("\n\n");
+                sb.append("time: ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date())).append("\n");
+                sb.append("device: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
+                sb.append("android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n\n");
+
+                // 容器日志（最关键）
+                sb.append("=== container log.txt ===\n");
+                File containerLog = new File(getDataDir(), "log.txt");
+                if (containerLog.exists()) {
+                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(containerLog)))) {
+                        String line;
+                        int count = 0;
+                        while ((line = reader.readLine()) != null) {
+                            sb.append(line).append("\n");
+                            if (++count > 1000) {
+                                sb.append("... (truncated at 1000 lines)\n");
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    sb.append("(log.txt not found — container never started)\n");
+                }
+                sb.append("\n");
 
                 // logcat: io.twoyi 相关
                 sb.append("=== logcat (io.twoyi) ===\n");
                 appendCmdOutput(sb, new String[]{
                         "logcat", "-d", "-v", "time",
-                        "-s", "io.twoyi:*", "RomManager:*", "TwoyiStatus:*", "TwoyiSocketServer:*"
+                        "-s", "io.twoyi:*", "RomManager:*", "TwoyiStatus:*", "TwoyiSocketServer:*",
+                        "Render2Activity:*", "Renderer:*"
                 });
                 sb.append("\n");
 
@@ -285,18 +440,33 @@ new Thread(() -> {
                 });
                 sb.append("\n");
 
-                // logcat: CLIENT_EGL / renderer
-                sb.append("=== logcat (renderer) ===\n");
-                appendCmdOutput(sb, new String[]{
-                        "logcat", "-d", "-v", "time",
-                        "-s", "CLIENT_EGL:*", "Render2Activity:*", "Renderer:*"
-                });
+                // 检查容器关键文件是否存在
+                sb.append("=== container files check ===\n");
+                File rootfsDir = RomManager.getRootfsDir(getApplicationContext());
+                for (String name : new String[]{"init", "libloader.so", "rom.ini", "system", "vendor"}) {
+                    File f = new File(rootfsDir, name);
+                    sb.append(name).append(": ").append(f.exists() ? "OK" : "MISSING").append("\n");
+                }
+                sb.append("\n");
 
+                // 检查 socket 目录
+                File socketDir = new File(getDataDir(), "socket");
+                sb.append("socket dir: ").append(socketDir.exists() ? "OK" : "MISSING").append("\n");
+
+                // 写入 app 私有目录（不需要权限）
                 try (FileOutputStream fos = new FileOutputStream(outFile)) {
                     fos.write(sb.toString().getBytes());
                 }
 
-                String msg = "日志已保存: " + outFile.getAbsolutePath();
+                // 同时尝试复制到外部存储（方便用户导出）
+                File externalOut = new File(Environment.getExternalStorageDirectory(),
+                        "twoyi_boot_log_" + ts + ".txt");
+                try (FileOutputStream fos = new FileOutputStream(externalOut)) {
+                    fos.write(sb.toString().getBytes());
+                } catch (Throwable ignored) {
+                }
+
+                String msg = "日志: " + outFile.getAbsolutePath();
                 Log.i(TAG, msg);
                 runOnUiThread(() -> Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show());
             } catch (Throwable e) {

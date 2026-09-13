@@ -49,7 +49,7 @@ public class TwoyiStatusManager {
         if (mStarted.compareAndSet(false, true)) {
             mBootLatch.countDown();
             long elapsed = SystemClock.elapsedRealtime() - mBootStartTime.get();
-            Log.i(TAG, "boot completed in " + elapsed + "ms");
+            Log.i(TAG, "BOOT_COMPLETED: boot finished in " + elapsed + "ms");
         }
     }
 
@@ -58,14 +58,18 @@ public class TwoyiStatusManager {
     }
 
     public void reset() {
+        Log.i(TAG, "reset: starting new boot cycle");
         mStarted.set(false);
         mBootStartTime.set(SystemClock.elapsedRealtime());
         mBootLatch = new CountDownLatch(1);
     }
 
     public boolean waitBoot(long timeout, TimeUnit unit) {
+        Log.i(TAG, "waitBoot: waiting up to " + timeout + " " + unit);
         try {
-            return mBootLatch.await(timeout, unit);
+            boolean done = mBootLatch.await(timeout, unit);
+            Log.i(TAG, "waitBoot: result=" + done);
+            return done;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
