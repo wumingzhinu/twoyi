@@ -148,14 +148,13 @@ fn renderer_init_inner(
         let mut spawned = false;
         for init_path in &init_candidates {
             info!("trying init: {}", init_path);
+            let out = outputs.try_clone().expect("clone stdout");
+            let err = errors.try_clone().expect("clone stderr");
             match Command::new(init_path)
                 .current_dir(working_dir)
                 .env("TYLOADER", &loader_path)
-                .stdout(Stdio::from(outputs.try_clone().unwrap_or_else(|_| {
-                    // 不应该到这里，但以防万一
-                    Stdio::null()
-                })))
-                .stderr(Stdio::from(errors.try_clone().unwrap_or_else(|_| Stdio::null())))
+                .stdout(Stdio::from(out))
+                .stderr(Stdio::from(err))
                 .spawn()
             {
                 Ok(child) => {
