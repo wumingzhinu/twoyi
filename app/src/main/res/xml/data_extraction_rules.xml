@@ -7,13 +7,13 @@
 
 <data-extraction-rules>
     <cloud-backup>
-        <exclude domain="rootfile" path="." />
+        <exclude domain="root" path="." />
         <exclude domain="file" path="rootfs/" />
         <exclude domain="file" path="socket/" />
         <exclude domain="sharedpref" path="." />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="rootfile" path="." />
+        <exclude domain="root" path="." />
         <exclude domain="file" path="rootfs/" />
         <exclude domain="file" path="socket/" />
         <exclude domain="sharedpref" path="." />
