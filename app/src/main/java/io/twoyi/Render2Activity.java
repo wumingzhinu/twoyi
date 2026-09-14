@@ -240,7 +240,8 @@ new Thread(() -> {
     }
 
     private void showBootingProcedure(boolean coldBoot) {
-        mLoadingText.setVisibility(View.GONE);
+        mLoadingText.setVisibility(View.VISIBLE);
+        mLoadingText.setText(coldBoot ? "Booting (cold start)..." : "Booting...");
         mBootLogView.setVisibility(View.VISIBLE);
 
         int timeoutSeconds = 60;
@@ -264,7 +265,6 @@ new Thread(() -> {
                         }
                     }
 
-                    // 显示进度
                     final int sec = elapsed;
                     runOnUiThread(() -> mLoadingText.setText("Booting... " + sec + "s / " + timeoutSeconds + "s"));
 
@@ -279,26 +279,37 @@ new Thread(() -> {
             }
 
             if (!success) {
-                mBootRetryCount++;
-                LogEvents.trackBootFailure(getApplicationContext());
                 mBootFailCount.incrementAndGet();
-                mBootRetryCount = mBootFailCount.get();
-                String logPath = dumpBootFailureLogs();
+                LogEvents.trackBootFailure(getApplicationContext());
+                Log.e(TAG, "boot timeout at " + elapsed + "s, attempt " + mBootFailCount.get() + "/3");
+
+                runOnUiThread(() -> mLoadingText.setText("Boot timeout (" + elapsed + "s), collecting logs..."));
+
+                final String logPath = dumpBootFailureLogs();
 
                 final boolean shouldRetry = mBootFailCount.get() <= 3;
                 runOnUiThread(() -> {
-                    String msg = "Boot failed (attempt " + mBootRetryCount + "/3)\nCheck Downloads for log";
-                    mLoadingText.setText(msg);
-                    Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show();
+                    mLoadingView.stopAnimation();
+                    if (shouldRetry) {
+                        String msg = "Boot failed (attempt " + mBootFailCount.get() + "/3)\nRetrying in 5s...";
+                        mLoadingText.setText(msg);
+                        Toast.makeText(getApplicationContext(), msg + "\nLog: " + logPath, Toast.LENGTH_LONG).show();
+                    } else {
+                        String msg = "Boot failed " + mBootFailCount.get() + " times.\nLog: " + logPath;
+                        mLoadingText.setText(msg);
+                        Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show();
+                    }
                 });
 
                 if (shouldRetry) {
                     mRootView.postDelayed(() -> {
                         TwoyiStatusManager.getInstance().reset();
+                        runOnUiThread(() -> {
+                            mLoadingView.startAnimation();
+                            mLoadingText.setText("Retrying boot...");
+                        });
                         bootSystem();
                     }, 5000);
-                } else {
-                    Log.e(TAG, "boot failed " + mBootFailCount.get() + " times, stop retrying. Check boot_logs in Downloads");
                 }
                 return;
             }
@@ -377,10 +388,9 @@ new Thread(() -> {
 
     private String dumpBootFailureLogs() {
         String savedPath = null;
+        String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        StringBuilder sb = new StringBuilder();
         try {
-            String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-
-            StringBuilder sb = new StringBuilder();
             sb.append("=== twoyi boot failure log ===\n");
             sb.append("time: ").append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date())).append("\n");
             sb.append("device: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
@@ -491,18 +501,24 @@ new Thread(() -> {
             appendCmdOutput(sb, new String[]{"logcat", "-d", "-b", "crash", "-v", "time"}, null);
             sb.append("\n");
 
-            // SELinux denials
+            // SELinux denials (logcat only, no dmesg - Android 16 seccomp may kill process)
             sb.append("=== SELinux denials ===\n");
             appendCmdOutput(sb, new String[]{"logcat", "-d", "-b", "events"}, "avc:");
-            appendCmdOutput(sb, new String[]{"dmesg"}, "avc:");
             sb.append("\n");
-
-            // Save to Downloads via MediaStore
-            savedPath = saveLogForUser("boot_fail_" + ts + ".txt", sb.toString());
-            Log.i(TAG, "boot failure log: " + (savedPath != null ? savedPath : "save failed"));
         } catch (Throwable e) {
-            Log.e(TAG, "dumpBootFailureLogs failed", e);
-            return "dump failed: " + e.getMessage();
+            Log.e(TAG, "dumpBootFailureLogs build error", e);
+            sb.append("\nBUILD ERROR: ").append(e.getMessage()).append("\n");
+        }
+
+        // ALWAYS try to save even if partial
+        try {
+            String content = sb.toString();
+            if (content.length() > 0) {
+                savedPath = saveLogForUser("boot_fail_" + ts + ".txt", content);
+                Log.i(TAG, "boot failure log: " + (savedPath != null ? savedPath : "save failed"));
+            }
+        } catch (Throwable e) {
+            Log.e(TAG, "saveLogForUser failed", e);
         }
         return savedPath != null ? savedPath : "save failed";
     }
