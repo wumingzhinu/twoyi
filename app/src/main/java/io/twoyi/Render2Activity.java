@@ -410,7 +410,7 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
         mLoadingText.setText(coldBoot ? "Booting (cold start)..." : "Booting...");
         mBootLogView.setVisibility(View.VISIBLE);
 
-        int timeoutSeconds = 60;
+        int timeoutSeconds = 180;
 
         new Thread(() -> {
             boolean success = false;
@@ -427,6 +427,16 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                     if (elapsed % pollInterval == 0 && elapsed > 0) {
                         if (!isContainerAlive()) {
                             Log.e(TAG, "container process died at " + elapsed + "s");
+                            break;
+                        }
+                    }
+
+                    // Fallback: 如果 system_server 在运行，说明 boot 实际已完成
+                    // （BOOT_COMPLETED 消息可能因 init 卡在 post-fs-data 而未发送）
+                    if (elapsed >= 60 && elapsed % 10 == 0) {
+                        if (isSystemServerRunning()) {
+                            Log.i(TAG, "system_server detected at " + elapsed + "s, treating as boot success");
+                            success = true;
                             break;
                         }
                     }
@@ -537,6 +547,39 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                             || cmdline.contains("libtwoyi_init")
                             || cmdline.contains("\0init\0")
                             || cmdline.equals("init")) {
+                        return true;
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    /**
+     * 检测容器内 system_server 是否在运行。
+     * 作为 BOOT_COMPLETED 消息的备用检测机制。
+     */
+    private boolean isSystemServerRunning() {
+        try {
+            File procDir = new File("/proc");
+            File[] entries = procDir.listFiles();
+            if (entries == null) return false;
+            for (File entry : entries) {
+                String name = entry.getName();
+                if (!name.matches("\\d+")) continue;
+                try {
+                    File cmdlineFile = new File(entry, "cmdline");
+                    if (!cmdlineFile.exists() || !cmdlineFile.canRead()) continue;
+                    byte[] buf = new byte[512];
+                    int len;
+                    try (FileInputStream fis = new FileInputStream(cmdlineFile)) {
+                        len = fis.read(buf);
+                    }
+                    if (len <= 0) continue;
+                    String cmdline = new String(buf, 0, len);
+                    if (cmdline.contains("system_server")) {
                         return true;
                     }
                 } catch (Throwable ignored) {
