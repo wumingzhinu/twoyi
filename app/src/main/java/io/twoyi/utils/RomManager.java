@@ -81,12 +81,6 @@ public final class RomManager {
         // GPU 相关属性 - 尝试绕过 OpenGL ES 驱动缺失问题
         // 禁用 Zygote 的 OpenGL 预加载，避免因缺少 GPU 驱动而崩溃
         properties.setProperty("ro.zygote.disable_gl_preload", "true");
-        // 设置 EGL 实现为 SwiftShader 软件渲染
-        properties.setProperty("ro.hardware.egl", "swiftshader");
-        // 设置 HWUI 渲染器为软件渲染
-        properties.setProperty("debug.hwui.renderer", "skiagl");
-        // 禁用硬件加速，强制使用软件渲染
-        properties.setProperty("debug.hwui.disable_hwui", "true");
 
         try (Writer writer = new FileWriter(propFile)) {
             properties.store(writer, null);
