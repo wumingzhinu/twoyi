@@ -283,22 +283,16 @@ new Thread(() -> {
                 LogEvents.trackBootFailure(getApplicationContext());
                 Log.e(TAG, "boot timeout at " + elapsed + "s, attempt " + mBootFailCount.get() + "/3");
 
-                runOnUiThread(() -> mLoadingText.setText("Boot timeout, collecting logs..."));
+                runOnUiThread(() -> mLoadingText.setText("Boot timeout, collecting diagnostics..."));
 
-                final String logPath = dumpBootFailureLogs();
+                final String diagnosticInfo = collectDiagnosticInfo();
+                dumpBootFailureLogs();
 
                 final boolean shouldRetry = mBootFailCount.get() <= 3;
                 runOnUiThread(() -> {
                     mLoadingView.stopAnimation();
-                    if (shouldRetry) {
-                        String msg = "Boot failed (attempt " + mBootFailCount.get() + "/3)\nRetrying in 5s...";
-                        mLoadingText.setText(msg);
-                        Toast.makeText(getApplicationContext(), msg + "\nLog: " + logPath, Toast.LENGTH_LONG).show();
-                    } else {
-                        String msg = "Boot failed " + mBootFailCount.get() + " times.\nLog: " + logPath;
-                        mLoadingText.setText(msg);
-                        Toast.makeText(getApplicationContext(), msg, Toast.LENGTH_LONG).show();
-                    }
+                    mLoadingText.setText(diagnosticInfo);
+                    mLoadingText.setTextSize(10);
                 });
 
                 if (shouldRetry) {
@@ -307,9 +301,10 @@ new Thread(() -> {
                         runOnUiThread(() -> {
                             mLoadingView.startAnimation();
                             mLoadingText.setText("Retrying boot...");
+                            mLoadingText.setTextSize(12);
                         });
                         bootSystem();
-                    }, 5000);
+                    }, 10000);
                 }
                 return;
             }
@@ -384,6 +379,86 @@ new Thread(() -> {
         } catch (Throwable ignored) {
         }
         return false;
+    }
+
+    private String collectDiagnosticInfo() {
+        StringBuilder sb = new StringBuilder();
+        try {
+            sb.append("twoyi boot failure #").append(mBootFailCount.get()).append("\n\n");
+
+            // Device info
+            sb.append("Device: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL).append("\n");
+            sb.append("Android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
+            sb.append("Fingerprint: ").append(Build.FINGERPRINT).append("\n\n");
+
+            // nativeLibDir
+            try {
+                String nativeLibDir = getApplicationInfo().nativeLibraryDir;
+                sb.append("nativeLibDir:\n  ").append(nativeLibDir).append("\n");
+                sb.append("  libtwoyi.so: ").append(new File(nativeLibDir, "libtwoyi.so").exists() ? "OK" : "MISSING").append("\n");
+                sb.append("  libloader.so: ").append(new File(nativeLibDir, "libloader.so").exists() ? "OK" : "MISSING").append("\n");
+                File initSo = new File(nativeLibDir, "libtwoyi_init.so");
+                sb.append("  libtwoyi_init.so: ").append(initSo.exists() ? "OK (" + initSo.length() + "b, exec=" + initSo.canExecute() + ")" : "MISSING").append("\n");
+            } catch (Throwable t) {
+                sb.append("nativeLibDir error: ").append(t.getMessage()).append("\n");
+            }
+            sb.append("\n");
+
+            // rootfs/init
+            try {
+                File rootfsDir = RomManager.getRootfsDir(getApplicationContext());
+                sb.append("rootfsDir: ").append(rootfsDir.getAbsolutePath()).append("\n");
+                File initFile = new File(rootfsDir, "init");
+                sb.append("init exists: ").append(initFile.exists()).append("\n");
+                if (initFile.exists()) {
+                    sb.append("init size: ").append(initFile.length()).append("b");
+                    sb.append(" exec=").append(initFile.canExecute());
+                    sb.append(" read=").append(initFile.canRead()).append("\n");
+                    try (FileInputStream fis = new FileInputStream(initFile)) {
+                        byte[] magic = new byte[4];
+                        if (fis.read(magic) == 4) {
+                            boolean elf = magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+                            sb.append("init ELF: ").append(elf ? "valid" : "NOT ELF").append("\n");
+                        }
+                    }
+                }
+                for (String name : new String[]{"rom.ini", "system", "vendor", "data"}) {
+                    sb.append(name).append(": ").append(new File(rootfsDir, name).exists() ? "OK" : "MISSING").append("  ");
+                }
+                sb.append("\n");
+            } catch (Throwable t) {
+                sb.append("rootfs error: ").append(t.getMessage()).append("\n");
+            }
+            sb.append("\n");
+
+            // container log.txt
+            try {
+                File containerLog = new File(getDataDir(), "log.txt");
+                if (containerLog.exists()) {
+                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(containerLog)))) {
+                        String line;
+                        int count = 0;
+                        while ((line = reader.readLine()) != null && count < 30) {
+                            sb.append(line).append("\n");
+                            count++;
+                        }
+                        if (count >= 30) sb.append("... (more in file)\n");
+                    }
+                } else {
+                    sb.append("log.txt: NOT FOUND\n");
+                }
+            } catch (Throwable t) {
+                sb.append("log.txt error: ").append(t.getMessage()).append("\n");
+            }
+            sb.append("\n");
+
+            // init process
+            sb.append("init process running: ").append(isInitProcessRunning()).append("\n");
+
+        } catch (Throwable t) {
+            sb.append("DIAGNOSTIC ERROR: ").append(t.getMessage());
+        }
+        return sb.toString();
     }
 
     private String dumpBootFailureLogs() {
