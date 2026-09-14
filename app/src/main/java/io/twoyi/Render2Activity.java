@@ -283,7 +283,7 @@ new Thread(() -> {
                 LogEvents.trackBootFailure(getApplicationContext());
                 Log.e(TAG, "boot timeout at " + elapsed + "s, attempt " + mBootFailCount.get() + "/3");
 
-                runOnUiThread(() -> mLoadingText.setText("Boot timeout (" + elapsed + "s), collecting logs..."));
+                runOnUiThread(() -> mLoadingText.setText("Boot timeout, collecting logs..."));
 
                 final String logPath = dumpBootFailureLogs();
 
