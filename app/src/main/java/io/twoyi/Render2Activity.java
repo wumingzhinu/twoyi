@@ -292,39 +292,73 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                     try {
                         File rootfsDir = new File(getFilesDir(), "../rootfs");
                         StringBuilder sb = new StringBuilder();
-                        sb.append("rootfs dir: ").append(rootfsDir.exists() ? "EXISTS" : "MISSING").append("\n");
+                        sb.append("rootfs: ").append(rootfsDir.exists() ? "EXISTS" : "MISSING").append("\n");
 
-                        // Check key files
-                        String[] keyFiles = {"init", "rootfs.prop", "init.goldfish.rc", "default.prop", "proc", "sys", "dev"};
-                        for (String f : keyFiles) {
-                            File check = new File(rootfsDir, f);
-                            if (!check.exists()) {
-                                sb.append(f).append(": MISSING\n");
-                            } else if (check.isDirectory()) {
-                                sb.append(f).append(": DIR/\n");
-                            } else {
-                                sb.append(f).append(": FILE (").append(check.length()).append(")\n");
+                        // List top-level contents
+                        File[] topFiles = rootfsDir.listFiles();
+                        if (topFiles != null) {
+                            sb.append("top entries: ").append(topFiles.length).append("\n");
+                            int shown = 0;
+                            for (File f : topFiles) {
+                                if (shown >= 15) { sb.append("... (more)\n"); break; }
+                                String type = f.isDirectory() ? "DIR/" : "FILE(" + f.length() + ")";
+                                sb.append("  ").append(f.getName()).append(": ").append(type).append("\n");
+                                shown++;
                             }
+                        } else {
+                            sb.append("rootfs: CANNOT LIST\n");
                         }
 
-                        // Also check if init is executable
-                        File initFile = new File(rootfsDir, "init");
-                        if (initFile.exists() && initFile.isFile()) {
-                            sb.append("init executable: ").append(initFile.canExecute() ? "YES" : "NO").append("\n");
+                        // Check critical paths
+                        String[][] checks = {
+                            {"init", null},
+                            {"system/etc/prop.default", null},
+                            {"prop.default", null},
+                            {"vendor/default.prop", null},
+                            {"vendor/etc/init/hw/init.goldfish.rc", null},
+                            {"system/etc/init", null},
+                        };
+                        for (String[] check : checks) {
+                            File f = new File(rootfsDir, check[0]);
+                            String status;
+                            if (!f.exists()) status = "MISSING";
+                            else if (f.isDirectory()) status = "DIR/";
+                            else status = "FILE(" + f.length() + ")";
+                            sb.append(check[0]).append(": ").append(status).append("\n");
                         }
-
-                        // Check nativeLibDir
-                        String nativeLibDir = getApplicationInfo().nativeLibraryDir;
-                        File initInLib = new File(nativeLibDir, "libtwoyi_init.so");
-                        sb.append("libtwoyi_init.so: ").append(initInLib.exists() ? "EXISTS (" + initInLib.length() + ")" : "MISSING").append("\n");
 
                         final String rootfsInfo = sb.toString();
-                        runOnUiThread(() -> mLoadingText.setText(rootfsInfo + "\nBooting..."));
+                        runOnUiThread(() -> {
+                            mLoadingText.setTextSize(9);
+                            mLoadingText.setText(rootfsInfo);
+                        });
                     } catch (Throwable t) {
-                        runOnUiThread(() -> mLoadingText.setText("Step 3.5: rootfs check error: " + t.getMessage()));
+                        runOnUiThread(() -> mLoadingText.setText("rootfs check error: " + t.getMessage()));
                     }
 
-                    runOnUiThread(() -> mLoadingText.setText("Step 4: Adding SurfaceView..."));
+                    // Show boot log too
+                    try {
+                        File logFile = new File("/data/data/io.twoyi/log.txt");
+                        if (logFile.exists() && logFile.canRead()) {
+                            java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader(logFile));
+                            StringBuilder logSb = new StringBuilder("\n=== INIT LOG ===\n");
+                            String line;
+                            int lineCount = 0;
+                            while ((line = br.readLine()) != null && lineCount < 40) {
+                                logSb.append(line).append("\n");
+                                lineCount++;
+                            }
+                            br.close();
+                            final String logContent = logSb.toString();
+                            runOnUiThread(() -> {
+                                String current = mLoadingText.getText().toString();
+                                mLoadingText.setText(current + logContent);
+                            });
+                        }
+                    } catch (Throwable ignored) {}
+
+                    mIsExtracting.set(false);
+                    runOnUiThread(() -> {});
 
                     runOnUiThread(() -> {
                         if (mSurfaceView.getParent() != null) {
