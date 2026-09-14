@@ -86,6 +86,50 @@ public final class RomManager {
             properties.store(writer, null);
         } catch (IOException ignored) {
         }
+
+        createStubHalServices(context);
+    }
+
+    /**
+     * 创建缺失的 HAL 服务定义文件。
+     * rootfs 的 vendor 目录是空的（rootfs.7z 中只有占位文件），
+     * 但 audioserver/keystore 等服务依赖 audio-hal-2-0 等 HAL 服务。
+     * 这些 HAL 服务不存在时，audioserver 崩溃-重启形成死循环，
+     * 吃光 CPU 导致 boot 永远无法完成。
+     *
+     * 解决方案：在 vendor/etc/init/ 下创建 stub rc 文件，
+     * 定义这些缺失的 HAL 服务为持续运行的 sleep 进程。
+     */
+    private static void createStubHalServices(Context context) {
+        File vendorInitDir = new File(getVendorDir(context), "etc/init");
+        if (!vendorInitDir.exists()) {
+            vendorInitDir.mkdirs();
+        }
+
+        // audio-hal-2-0: audioserver 依赖此服务，缺失会导致崩溃循环
+        File audioHalRc = new File(vendorInitDir, "audio-hal-2-0.rc");
+        if (!audioHalRc.exists()) {
+            try (Writer w = new FileWriter(audioHalRc)) {
+                w.write("service audio-hal-2-0 /system/bin/sleep 3600\n");
+                w.write("    class hal\n");
+                w.write("    user audio\n");
+                w.write("    group audio\n");
+                w.write("    onrestart restart audioserver\n");
+            } catch (IOException ignored) {
+            }
+        }
+
+        // keymaster 服务 stub (keystore 依赖)
+        File keymasterRc = new File(vendorInitDir, "keymaster-3-0.rc");
+        if (!keymasterRc.exists()) {
+            try (Writer w = new FileWriter(keymasterRc)) {
+                w.write("service keymaster-3-0 /system/bin/sleep 3600\n");
+                w.write("    class hal\n");
+                w.write("    user system\n");
+                w.write("    group system drmrpc\n");
+            } catch (IOException ignored) {
+            }
+        }
     }
 
     public static void ensureBootFiles(Context context) {
