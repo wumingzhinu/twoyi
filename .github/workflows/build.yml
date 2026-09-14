@@ -98,7 +98,8 @@ jobs:
           -DSWIFTSHADER_BUILD_TESTS=OFF \
           -DSWIFTSHADER_BUILD_BENCHMARKS=OFF \
           -DREACTOR_BACKEND=Subzero \
-          -DSWIFTSHADER_ENABLE_ASTC=OFF
+          -DSWIFTSHADER_ENABLE_ASTC=OFF \
+          -DSWIFTSHADER_BUILD_VULKAN=OFF
         ninja
         # Find and copy SwiftShader libraries to jniLibs
         find . -name "libEGL_swiftshader.so" -exec cp {} $GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/ \;
