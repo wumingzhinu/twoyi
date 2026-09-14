@@ -6,7 +6,7 @@ use jni::objects::JValue;
 use jni::sys::{jclass, jint, jobject, jfloatArray, jintArray, JNI_ERR, jstring};
 use jni::JNIEnv;
 use jni::{JavaVM, NativeMethod};
-use log::{error, info, Level, debug};
+use log::{error, info, warn, Level, debug};
 use ndk_sys;
 use std::ffi::c_void;
 
@@ -17,9 +17,36 @@ use android_logger::Config;
 
 use std::fs::File;
 use std::process::{Command, Stdio};
+use std::ffi::CString;
 
 mod input;
 mod renderer_bindings;
+
+fn ensure_named_pipes() {
+    let working_dir = "/data/data/io.twoyi/rootfs";
+    let pipes = [
+        format!("{}/opengles", working_dir),
+        format!("{}/opengles2", working_dir),
+        format!("{}/opengles3", working_dir),
+    ];
+    for pipe in &pipes {
+        let c_path = match CString::new(pipe.as_str()) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let ret = unsafe { libc::mkfifo(c_path.as_ptr(), 0o666) };
+        if ret == 0 {
+            info!("Created named pipe: {}", pipe);
+        } else {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::EEXIST) {
+                info!("Named pipe already exists: {}", pipe);
+            } else {
+                warn!("Failed to create named pipe {}: {}", pipe, err);
+            }
+        }
+    }
+}
 
 /// ## Examples
 /// ```
@@ -94,10 +121,12 @@ fn renderer_init_inner(
     } else {
         input::start_input_system(width, height);
 
+        ensure_named_pipes();
+
         thread::spawn(move || {
             let win = window.ptr().as_ptr() as *mut c_void;
             info!("win: {:#?}", win);
-            unsafe {
+            let ret = unsafe {
                 renderer_bindings::startOpenGLRenderer(
                     win,
                     width,
@@ -105,9 +134,16 @@ fn renderer_init_inner(
                     xdpi as i32,
                     ydpi as i32,
                     fps as i32,
-                );
+                )
+            };
+            if ret == 0 {
+                error!("startOpenGLRenderer failed (returned 0)");
+            } else {
+                info!("startOpenGLRenderer succeeded (returned {})", ret);
             }
         });
+
+        std::thread::sleep(std::time::Duration::from_secs(2));
 
         let loader_path: String = match env.get_string(loader.into()) {
             Ok(s) => s.into(),

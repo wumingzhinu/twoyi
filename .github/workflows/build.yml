@@ -84,6 +84,29 @@ jobs:
         chmod +x app/src/main/jniLibs/arm64-v8a/libtwoyi_hal_stub.so
         file app/src/main/jniLibs/arm64-v8a/libtwoyi_hal_stub.so
 
+    - name: Build SwiftShader (software GPU)
+      run: |
+        sudo apt-get install -y cmake ninja-build
+        git clone --depth 1 https://github.com/google/swiftshader.git /tmp/swiftshader
+        mkdir -p /tmp/swiftshader/build
+        cd /tmp/swiftshader/build
+        cmake .. -GNinja \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=arm64-v8a \
+          -DANDROID_PLATFORM=android-27 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DSWIFTSHADER_BUILD_TESTS=OFF \
+          -DSWIFTSHADER_BUILD_BENCHMARKS=OFF \
+          -DREACTOR_BACKEND=Subzero \
+          -DSWIFTSHADER_ENABLE_ASTC=OFF
+        ninja
+        # Find and copy SwiftShader libraries to jniLibs
+        find . -name "libEGL_swiftshader.so" -exec cp {} $GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/ \;
+        find . -name "libGLESv2_swiftshader.so" -exec cp {} $GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/ \;
+        find . -name "libGLESv1_CM_swiftshader.so" -exec cp {} $GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/ \;
+        echo "=== SwiftShader libraries ==="
+        ls -la $GITHUB_WORKSPACE/app/src/main/jniLibs/arm64-v8a/lib*swiftshader*
+
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
