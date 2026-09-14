@@ -200,6 +200,8 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
     }
 
     private void bootSystemInner() {
+        runOnUiThread(() -> mLoadingText.setText("Step 1: Checking ROM..."));
+
         boolean romExist = RomManager.romExist(this);
         boolean factoryRomUpdated = RomManager.needsUpgrade(this);
         boolean forceInstall = AppKV.getBooleanConfig(getApplicationContext(), AppKV.FORCE_ROM_BE_RE_INSTALL, false);
@@ -207,30 +209,45 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
 
         boolean shouldExtractRom = !romExist || forceInstall || (!use3rdRom && factoryRomUpdated);
 
+        runOnUiThread(() -> mLoadingText.setText("Step 1: ROM exist=" + romExist + " upgrade=" + factoryRomUpdated + "\nshouldExtract=" + shouldExtractRom));
+
         if (shouldExtractRom) {
             Log.i(TAG, "extracting rom...");
 
-            showTipsForFirstBoot();
-
-new Thread(() -> {
+            new Thread(() -> {
                 mIsExtracting.set(true);
+
+                runOnUiThread(() -> mLoadingText.setText("Step 2: Extracting rootfs.7z..."));
+
                 boolean extractSuccess = false;
                 try {
                     extractSuccess = RomManager.extractRootfs(getApplicationContext(), romExist, factoryRomUpdated, forceInstall, use3rdRom);
-                    if (extractSuccess) {
-                        RomManager.initRootfs(getApplicationContext());
-                    }
                 } catch (Throwable e) {
                     Log.e(TAG, "extract rootfs error", e);
-                }
-                mIsExtracting.set(false);
-
-                if (!extractSuccess) {
-                    // 解压失败，给出明确错误提示，避免无限重试
-                    runOnUiThread(() -> Toast.makeText(getApplicationContext(),
-                            R.string.boot_failed, Toast.LENGTH_LONG).show());
+                    final String err = e.getMessage();
+                    runOnUiThread(() -> mLoadingText.setText("Step 2: EXTRACT FAILED\n" + err));
+                    mIsExtracting.set(false);
                     return;
                 }
+
+                if (!extractSuccess) {
+                    runOnUiThread(() -> mLoadingText.setText("Step 2: EXTRACT RETURNED FALSE\nROM extraction failed"));
+                    mIsExtracting.set(false);
+                    return;
+                }
+
+                runOnUiThread(() -> mLoadingText.setText("Step 3: initRootfs..."));
+                try {
+                    RomManager.initRootfs(getApplicationContext());
+                } catch (Throwable e) {
+                    final String err = e.getMessage();
+                    runOnUiThread(() -> mLoadingText.setText("Step 3: initRootfs FAILED\n" + err));
+                    mIsExtracting.set(false);
+                    return;
+                }
+
+                mIsExtracting.set(false);
+                runOnUiThread(() -> mLoadingText.setText("Step 4: Adding SurfaceView..."));
 
                 runOnUiThread(() -> {
                     if (mSurfaceView.getParent() != null) {
@@ -241,6 +258,8 @@ new Thread(() -> {
                 });
             }, "extract-rom").start();
         } else {
+            runOnUiThread(() -> mLoadingText.setText("Step 2: ROM exists, skip extract"));
+
             if (mSurfaceView.getParent() != null) {
                 ((ViewGroup) mSurfaceView.getParent()).removeView(mSurfaceView);
             }
