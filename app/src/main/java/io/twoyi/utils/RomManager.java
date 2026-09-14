@@ -416,6 +416,13 @@ public final class RomManager {
 
     public static boolean extractRootfsInAssets(Context context) {
 
+        // Delete old rootfs to avoid permission conflicts (e.g. init file locked)
+        File rootfsDir = new File(context.getDataDir(), "rootfs");
+        if (rootfsDir.exists()) {
+            Log.i(TAG, "Deleting old rootfs directory before extraction");
+            deleteRecursive(rootfsDir);
+        }
+
         // read assets
         long t1 = SystemClock.elapsedRealtime();
         File rootfs7z = context.getFileStreamPath(ROOTFS_NAME);
@@ -536,5 +543,17 @@ public final class RomManager {
         }
         //noinspection ResultOfMethodCallIgnored
         file.mkdirs();
+    }
+
+    private static void deleteRecursive(File file) {
+        if (file.isDirectory()) {
+            File[] children = file.listFiles();
+            if (children != null) {
+                for (File child : children) {
+                    deleteRecursive(child);
+                }
+            }
+        }
+        file.delete();
     }
 }
