@@ -718,6 +718,63 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
             }
             sb.append("\n");
 
+            // EGL/GLES 驱动诊断
+            sb.append("=== EGL/GLES diagnostics ===\n");
+            try {
+                File rootfsDir = RomManager.getRootfsDir(getApplicationContext());
+                // 检查 egl 目录
+                for (String eglPath : new String[]{
+                        "system/lib64/egl",
+                        "vendor/lib64/egl",
+                        "vendor/lib/egl"
+                }) {
+                    File eglDir = new File(rootfsDir, eglPath);
+                    if (!eglDir.exists()) {
+                        sb.append(eglPath).append(": NOT FOUND\n");
+                    } else if (eglDir.isFile()) {
+                        sb.append(eglPath).append(": IS FILE (conflict!)\n");
+                    } else {
+                        File[] files = eglDir.listFiles();
+                        sb.append(eglPath).append(": dir, ").append(files != null ? files.length : 0).append(" files\n");
+                        if (files != null) {
+                            for (File f : files) {
+                                sb.append("  ").append(f.getName()).append(" (").append(f.length()).append("b)\n");
+                            }
+                        }
+                    }
+                }
+                // 检查关键 GPU 库
+                for (String libPath : new String[]{
+                        "system/lib64/libEGL.so",
+                        "system/lib64/libGLESv2.so",
+                        "system/lib64/libGLESv1_CM.so",
+                        "system/lib64/egl/libGLES_android.so",
+                        "system/lib64/egl/libEGL_goldfish.so",
+                        "system/lib64/egl/libGLESv2_goldfish.so"
+                }) {
+                    File libFile = new File(rootfsDir, libPath);
+                    if (libFile.exists()) {
+                        sb.append(libPath).append(": OK (").append(libFile.length()).append("b)\n");
+                    }
+                }
+                // 检查 vendor/default.prop 内容
+                File propFile = new File(rootfsDir, "vendor/default.prop");
+                if (propFile.exists()) {
+                    sb.append("--- vendor/default.prop ---\n");
+                    try (BufferedReader pr = new BufferedReader(new InputStreamReader(new FileInputStream(propFile)))) {
+                        String pl;
+                        while ((pl = pr.readLine()) != null) {
+                            sb.append(pl).append("\n");
+                        }
+                    }
+                } else {
+                    sb.append("vendor/default.prop: NOT FOUND\n");
+                }
+            } catch (Throwable t) {
+                sb.append("EGL diagnostics error: ").append(t.getMessage()).append("\n");
+            }
+            sb.append("\n");
+
             // 容器 log.txt
             sb.append("=== container log.txt ===\n");
             try {
@@ -728,7 +785,7 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                         int count = 0;
                         while ((line = reader.readLine()) != null) {
                             sb.append(line).append("\n");
-                            if (++count > 200) { sb.append("... (truncated)\n"); break; }
+                            if (++count > 500) { sb.append("... (truncated)\n"); break; }
                         }
                     }
                 } else {
