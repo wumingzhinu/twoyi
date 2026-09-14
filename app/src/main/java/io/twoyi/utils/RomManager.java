@@ -61,6 +61,7 @@ public final class RomManager {
     public static String lastExtractError = null;
 
     public static void initRootfs(Context context) {
+        ensureCriticalDirs(context);
         File propFile = getVendorPropFile(context);
         String language = Locale.getDefault().getLanguage();
         String country = Locale.getDefault().getCountry();
@@ -76,6 +77,16 @@ public final class RomManager {
         properties.setProperty("persist.sys.timezone", timeZoneID);
 
         properties.setProperty("ro.sf.lcd_density", String.valueOf(DisplayMetrics.DENSITY_DEVICE_STABLE));
+
+        // GPU 相关属性 - 尝试绕过 OpenGL ES 驱动缺失问题
+        // 禁用 Zygote 的 OpenGL 预加载，避免因缺少 GPU 驱动而崩溃
+        properties.setProperty("ro.zygote.disable_gl_preload", "true");
+        // 设置 EGL 实现为 SwiftShader 软件渲染
+        properties.setProperty("ro.hardware.egl", "swiftshader");
+        // 设置 HWUI 渲染器为软件渲染
+        properties.setProperty("debug.hwui.renderer", "skiagl");
+        // 禁用硬件加速，强制使用软件渲染
+        properties.setProperty("debug.hwui.disable_hwui", "true");
 
         try (Writer writer = new FileWriter(propFile)) {
             properties.store(writer, null);
@@ -94,13 +105,39 @@ public final class RomManager {
             createLoaderSymlink(context);
             ensureDir(new File(context.getDataDir(), "socket"));
             // 容器启动必需的目录（同步创建，避免竞态）
-            File devDir = new File(getRootfsDir(context), "dev");
+            ensureCriticalDirs(context);
+            File devDir = new File(getRootfsDir(context), "rootfs/dev");
             ensureDir(new File(devDir, "input"));
             ensureDir(new File(devDir, "socket"));
             ensureDir(new File(devDir, "maps"));
             // 确保 init 在 Android 12+ 的 noexec 数据目录上仍然可执行
             ensureExecutableInNativeLib(context);
         } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 确保 rootfs 中关键目录存在且为目录（非文件）。
+     * rootfs.7z 中 'rootfs/vendor' 等可能是文件条目，会阻止后续子条目创建目录。
+     * 每次启动前调用此方法修复。
+     */
+    private static void ensureCriticalDirs(Context context) {
+        File rootfsRoot = new File(getRootfsDir(context), "rootfs");
+        for (String dirName : new String[]{"vendor", "system", "data", "dev", "proc", "sys"}) {
+            File dirFile = new File(rootfsRoot, dirName);
+            if (dirFile.exists() && dirFile.isFile()) {
+                Log.w(TAG, "CRITICAL: '" + dirName + "' is a FILE — deleting and creating as directory");
+                dirFile.delete();
+                dirFile.mkdirs();
+            } else if (!dirFile.exists()) {
+                dirFile.mkdirs();
+            }
+            if (dirFile.isDirectory()) {
+                File[] children = dirFile.listFiles();
+                Log.i(TAG, "CRITICAL: '" + dirName + "' OK (dir, " + (children != null ? children.length : 0) + " children)");
+            } else {
+                Log.e(TAG, "CRITICAL: '" + dirName + "' STILL not a directory!");
+            }
         }
     }
 
