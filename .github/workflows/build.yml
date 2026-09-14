@@ -74,9 +74,13 @@ jobs:
 
     - name: Build HAL stub binary
       run: |
+        # Compile as executable (not shared object) to get correct ELF TLS alignment
+        # The twoyi loader handles ELF binaries in rootfs via execve interception
         $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang \
-          -o app/src/main/jniLibs/arm64-v8a/libtwoyi_hal_stub.so \
+          -o /tmp/hal_stub \
           app/src/main/cpp/hal_stub.c
+        # Rename to .so for Android package installer (only extracts .so from jniLibs)
+        cp /tmp/hal_stub app/src/main/jniLibs/arm64-v8a/libtwoyi_hal_stub.so
         chmod +x app/src/main/jniLibs/arm64-v8a/libtwoyi_hal_stub.so
         file app/src/main/jniLibs/arm64-v8a/libtwoyi_hal_stub.so
 
