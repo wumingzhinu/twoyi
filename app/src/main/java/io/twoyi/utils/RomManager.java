@@ -298,7 +298,46 @@ public final class RomManager {
             while ((entry = zFile.getNextEntry()) != null) {
                 entryCount++;
                 File outFile = new File(rootfsDir, entry.getName());
-                if (entry.isDirectory()) {
+                boolean isDirEntry = entry.isDirectory();
+                String entryName = entry.getName();
+
+                // Log first 200 entries + all vendor-related entries for debugging
+                if (entryCount <= 200 || entryName.contains("vendor")) {
+                    Log.i(TAG, "7z entry #" + entryCount + ": " + entryName
+                            + (isDirEntry ? " [DIR]" : " [FILE size=" + entry.getSize() + "]")
+                            + " -> " + outFile.getPath()
+                            + " exists=" + outFile.exists()
+                            + (outFile.exists() ? " isDir=" + outFile.isDirectory() + " isFile=" + outFile.isFile() : ""));
+                }
+
+                // CRITICAL: If outFile is already a file but this entry says it should be
+                // a directory (or has children), we MUST delete the file and skip writing
+                if (outFile.exists() && outFile.isFile()) {
+                    if (isDirEntry || entryName.endsWith("/")) {
+                        // This entry says it's a directory but a file exists — delete the file
+                        Log.w(TAG, "Entry #" + entryCount + " '" + entryName + "' is DIR but file exists at " + outFile.getPath() + " — deleting file");
+                        outFile.delete();
+                    } else {
+                        // For file entries: check if this is a known directory name that got
+                        // extracted as a file (wrong entry type in archive)
+                        String baseName = outFile.getName();
+                        if (!baseName.contains(".") && baseName.length() < 20) {
+                            if (baseName.equals("vendor") || baseName.equals("system") || baseName.equals("data")
+                                    || baseName.equals("dev") || baseName.equals("proc") || baseName.equals("sys")
+                                    || baseName.equals("etc") || baseName.equals("odm") || baseName.equals("oem")
+                                    || baseName.equals("product") || baseName.equals("apex") || baseName.equals("metadata")
+                                    || baseName.equals("config") || baseName.equals("mnt")) {
+                                Log.w(TAG, "Entry #" + entryCount + " '" + entryName + "' is FILE but '" + baseName + "' should be DIR — skipping");
+                                outFile.delete();
+                                while (zFile.read(buffer) > 0) {}
+                                skippedCount++;
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                if (isDirEntry) {
                     // Delete any ancestor FILE that blocks directory creation
                     File check = outFile;
                     while (check != null && !check.equals(rootfsDir)) {
@@ -327,7 +366,7 @@ public final class RomManager {
                     // (the directory tree was already extracted and is more important)
                     if (outFile.exists() && outFile.isDirectory()) {
                         Log.w(TAG, "Skipping file that would overwrite directory: " + entry.getName());
-                        // skip this entry - consume remaining bytes
+                        skippedCount++;
                         while (zFile.read(buffer) > 0) {}
                         continue;
                     }
@@ -337,6 +376,29 @@ public final class RomManager {
                             os.write(buffer, 0, len);
                         }
                     }
+                }
+            }
+
+            // Post-extraction verification: check critical directories
+            // If vendor/system/data are still files (not directories), the rootfs is broken
+            File rootfsRoot = new File(rootfsDir, "rootfs");
+            for (String dirName : new String[]{"vendor", "system", "data", "dev", "proc", "sys"}) {
+                File dirFile = new File(rootfsRoot, dirName);
+                if (dirFile.exists() && dirFile.isFile()) {
+                    Log.e(TAG, "POST-EXTRACT: '" + dirName + "' is a FILE (not dir)! Size=" + dirFile.length()
+                            + ". This will cause init failures. Attempting to delete...");
+                    dirFile.delete();
+                    if (dirFile.exists()) {
+                        Log.e(TAG, "POST-EXTRACT: FAILED to delete '" + dirName + "' file!");
+                        lastExtractError = "Cannot delete conflicting file: rootfs/" + dirName;
+                    } else {
+                        Log.i(TAG, "POST-EXTRACT: Deleted conflicting '" + dirName + "' file. Directory entries will recreate it on next boot.");
+                    }
+                } else if (dirFile.isDirectory()) {
+                    File[] children = dirFile.listFiles();
+                    Log.i(TAG, "POST-EXTRACT: '" + dirName + "' is dir with " + (children != null ? children.length : 0) + " children");
+                } else if (!dirFile.exists()) {
+                    Log.w(TAG, "POST-EXTRACT: '" + dirName + "' does not exist!");
                 }
             }
 
