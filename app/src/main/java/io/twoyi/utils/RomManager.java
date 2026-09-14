@@ -413,23 +413,56 @@ public final class RomManager {
         // read assets
         long t1 = SystemClock.elapsedRealtime();
         File rootfs7z = context.getFileStreamPath(ROOTFS_NAME);
+        long copiedSize = 0;
         try (InputStream inputStream = new BufferedInputStream(context.getAssets().open(ROOTFS_NAME));
              OutputStream os = new BufferedOutputStream(new FileOutputStream(rootfs7z))) {
             byte[] buffer = new byte[10240];
             int count;
             while ((count = inputStream.read(buffer)) > 0) {
                 os.write(buffer, 0, count);
+                copiedSize += count;
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            Log.e(TAG, "Failed to copy rootfs.7z from assets", e);
         }
         long t2 = SystemClock.elapsedRealtime();
+
+        Log.i(TAG, "rootfs.7z copied: " + copiedSize + " bytes in " + (t2 - t1) + "ms");
+
+        if (copiedSize < 1000) {
+            Log.e(TAG, "rootfs.7z too small (" + copiedSize + " bytes), likely LFS pointer");
+            return false;
+        }
+
+        // Check magic bytes: 7z signature is 0x37 0x7A 0xBC 0xAF 0x27 0x1C
+        try (FileInputStream fis = new FileInputStream(rootfs7z)) {
+            byte[] header = new byte[6];
+            int read = fis.read(header);
+            if (read < 6) {
+                Log.e(TAG, "rootfs.7z too small to read header");
+                return false;
+            }
+            if (header[0] != 0x37 || header[1] != 0x7A || header[2] != (byte)0xBC || header[3] != (byte)0xAF) {
+                Log.e(TAG, "rootfs.7z invalid magic: " + String.format("%02x %02x %02x %02x", header[0], header[1], header[2], header[3]));
+                // Read first 200 bytes for debugging
+                byte[] preview = new byte[200];
+                fis.close();
+                try (FileInputStream fis2 = new FileInputStream(rootfs7z)) {
+                    int previewRead = fis2.read(preview);
+                    String previewStr = new String(preview, 0, Math.min(previewRead, 200));
+                    Log.e(TAG, "rootfs.7z content preview: " + previewStr);
+                }
+                return false;
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to check rootfs.7z magic", e);
+        }
 
         int ret = extractRootfs(context, rootfs7z);
 
         long t3 = SystemClock.elapsedRealtime();
 
-        Log.i(TAG, "extract rootfs, read assets: " + (t2 - t1) + " un7z: " + (t3 - t2) + "ret: " + ret);
+        Log.i(TAG, "extract rootfs, read assets: " + (t2 - t1) + " un7z: " + (t3 - t2) + " ret: " + ret);
 
         return ret == 0;
     }

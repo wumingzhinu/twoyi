@@ -50,6 +50,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.text.SimpleDateFormat;
@@ -217,45 +218,89 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
             new Thread(() -> {
                 mIsExtracting.set(true);
 
-                runOnUiThread(() -> mLoadingText.setText("Step 2: Extracting rootfs.7z..."));
+                runOnUiThread(() -> mLoadingText.setText("Step 2: Checking rootfs.7z in assets..."));
 
-                boolean extractSuccess = false;
                 try {
-                    extractSuccess = RomManager.extractRootfs(getApplicationContext(), romExist, factoryRomUpdated, forceInstall, use3rdRom);
-                } catch (Throwable e) {
-                    Log.e(TAG, "extract rootfs error", e);
-                    final String err = e.getMessage();
-                    runOnUiThread(() -> mLoadingText.setText("Step 2: EXTRACT FAILED\n" + err));
-                    mIsExtracting.set(false);
-                    return;
-                }
-
-                if (!extractSuccess) {
-                    runOnUiThread(() -> mLoadingText.setText("Step 2: EXTRACT RETURNED FALSE\nROM extraction failed"));
-                    mIsExtracting.set(false);
-                    return;
-                }
-
-                runOnUiThread(() -> mLoadingText.setText("Step 3: initRootfs..."));
-                try {
-                    RomManager.initRootfs(getApplicationContext());
-                } catch (Throwable e) {
-                    final String err = e.getMessage();
-                    runOnUiThread(() -> mLoadingText.setText("Step 3: initRootfs FAILED\n" + err));
-                    mIsExtracting.set(false);
-                    return;
-                }
-
-                mIsExtracting.set(false);
-                runOnUiThread(() -> mLoadingText.setText("Step 4: Adding SurfaceView..."));
-
-                runOnUiThread(() -> {
-                    if (mSurfaceView.getParent() != null) {
-                        ((ViewGroup) mSurfaceView.getParent()).removeView(mSurfaceView);
+                    // Check rootfs.7z in assets
+                    String[] assetFiles = getAssets().list("");
+                    boolean hasRootfs = false;
+                    for (String f : assetFiles) {
+                        if (f.equals("rootfs.7z")) { hasRootfs = true; break; }
                     }
-                    mRootView.addView(mSurfaceView, 0);
-                    showBootingProcedure(true);
-                });
+                    final boolean hasRootfsFinal = hasRootfs;
+                    runOnUiThread(() -> mLoadingText.setText("Step 2a: rootfs.7z in assets: " + hasRootfsFinal));
+
+                    if (!hasRootfs) {
+                        runOnUiThread(() -> mLoadingText.setText("Step 2a: FATAL: rootfs.7z NOT in APK assets!"));
+                        mIsExtracting.set(false);
+                        return;
+                    }
+
+                    // Check rootfs.7z file size from assets
+                    try (InputStream is = getAssets().open("rootfs.7z")) {
+                        long size = 0;
+                        byte[] buf = new byte[8192];
+                        int read;
+                        while ((read = is.read(buf)) > 0) size += read;
+                        final long rootfsSize = size;
+                        runOnUiThread(() -> mLoadingText.setText("Step 2b: rootfs.7z size: " + (rootfsSize / 1024 / 1024) + "MB (" + rootfsSize + " bytes)"));
+
+                        if (rootfsSize < 1000) {
+                            // Likely an LFS pointer
+                            runOnUiThread(() -> mLoadingText.setText("Step 2b: WARNING: rootfs.7z is only " + rootfsSize + " bytes - likely Git LFS pointer!"));
+                            mIsExtracting.set(false);
+                            return;
+                        }
+                    }
+
+                    runOnUiThread(() -> mLoadingText.setText("Step 2c: Extracting rootfs.7z..."));
+
+                    boolean extractSuccess = false;
+                    try {
+                        extractSuccess = RomManager.extractRootfs(getApplicationContext(), romExist, factoryRomUpdated, forceInstall, use3rdRom);
+                    } catch (Throwable e) {
+                        Log.e(TAG, "extract rootfs error", e);
+                        final String err = e.getMessage();
+                        runOnUiThread(() -> mLoadingText.setText("Step 2c: EXTRACT EXCEPTION:\n" + err));
+                        mIsExtracting.set(false);
+                        return;
+                    }
+
+                    if (!extractSuccess) {
+                        // Check the file that was copied to see what happened
+                        File rootfs7z = getFilesDir().getAbsoluteFile().getParentFile().toPath().resolve("files").resolve("rootfs.7z").toFile();
+                        if (!rootfs7z.exists()) rootfs7z = new File(getFilesDir(), "rootfs.7z");
+                        final String sizeStr = rootfs7z.exists() ? (rootfs7z.length() / 1024 / 1024) + "MB" : "NOT FOUND";
+                        runOnUiThread(() -> mLoadingText.setText("Step 2c: EXTRACT RETURNED FALSE\nCopied rootfs.7z: " + sizeStr));
+                        mIsExtracting.set(false);
+                        return;
+                    }
+
+                    runOnUiThread(() -> mLoadingText.setText("Step 3: initRootfs..."));
+                    try {
+                        RomManager.initRootfs(getApplicationContext());
+                    } catch (Throwable e) {
+                        final String err = e.getMessage();
+                        runOnUiThread(() -> mLoadingText.setText("Step 3: initRootfs FAILED\n" + err));
+                        mIsExtracting.set(false);
+                        return;
+                    }
+
+                    mIsExtracting.set(false);
+                    runOnUiThread(() -> mLoadingText.setText("Step 4: Adding SurfaceView..."));
+
+                    runOnUiThread(() -> {
+                        if (mSurfaceView.getParent() != null) {
+                            ((ViewGroup) mSurfaceView.getParent()).removeView(mSurfaceView);
+                        }
+                        mRootView.addView(mSurfaceView, 0);
+                        showBootingProcedure(true);
+                    });
+                } catch (Throwable t) {
+                    final String err = t.getClass().getSimpleName() + ": " + t.getMessage();
+                    runOnUiThread(() -> mLoadingText.setText("Step 2: UNEXPECTED ERROR:\n" + err));
+                    mIsExtracting.set(false);
+                }
             }, "extract-rom").start();
         } else {
             runOnUiThread(() -> mLoadingText.setText("Step 2: ROM exists, skip extract"));
