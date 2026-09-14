@@ -289,6 +289,7 @@ public final class RomManager {
         long startTime = SystemClock.elapsedRealtime();
         lastExtractError = null;
         int entryCount = 0;
+        int skippedCount = 0;
         try (SevenZFile zFile = new SevenZFile(rootfs7z)) {
             SevenZArchiveEntry entry;
             File rootfsDir = context.getDataDir();
@@ -298,11 +299,30 @@ public final class RomManager {
                 entryCount++;
                 File outFile = new File(rootfsDir, entry.getName());
                 if (entry.isDirectory()) {
+                    // If there's a FILE at this path, delete it first
+                    if (outFile.exists() && outFile.isFile()) {
+                        Log.w(TAG, "Deleting file that conflicts with directory: " + entry.getName());
+                        outFile.delete();
+                    }
                     outFile.mkdirs();
                 } else {
                     File parent = outFile.getParentFile();
                     if (parent != null) {
+                        // If any ancestor is a FILE (not dir), delete it
+                        File ancestor = parent;
+                        while (ancestor != null && !ancestor.equals(rootfsDir)) {
+                            if (ancestor.exists() && ancestor.isFile()) {
+                                Log.w(TAG, "Deleting file that conflicts with directory path: " + ancestor.getName());
+                                ancestor.delete();
+                            }
+                            ancestor = ancestor.getParentFile();
+                        }
                         parent.mkdirs();
+                    }
+                    // If the target is a DIRECTORY but we're writing a FILE, delete the dir
+                    if (outFile.exists() && outFile.isDirectory()) {
+                        Log.w(TAG, "Deleting directory that conflicts with file: " + entry.getName());
+                        deleteRecursive(outFile);
                     }
                     try (OutputStream os = new BufferedOutputStream(new FileOutputStream(outFile), 64 * 1024)) {
                         int len;
@@ -317,7 +337,7 @@ public final class RomManager {
             // 解决方案：将 init 复制到 nativeLibraryDir（允许执行），然后用符号链接替换原位置。
             ensureExecutableInNativeLib(context);
 
-            Log.i(TAG, "extractRootfs done: " + entryCount + " entries in " + (SystemClock.elapsedRealtime() - startTime) + "ms");
+            Log.i(TAG, "extractRootfs done: " + entryCount + " entries (skipped " + skippedCount + ") in " + (SystemClock.elapsedRealtime() - startTime) + "ms");
             return 0;
         } catch (Exception e) {
             Log.e(TAG, "extract rootfs failed at entry #" + entryCount, e);
