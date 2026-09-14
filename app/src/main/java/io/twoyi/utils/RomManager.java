@@ -58,6 +58,8 @@ public final class RomManager {
     private RomManager() {
     }
 
+    public static String lastExtractError = null;
+
     public static void initRootfs(Context context) {
         File propFile = getVendorPropFile(context);
         String language = Locale.getDefault().getLanguage();
@@ -285,12 +287,15 @@ public final class RomManager {
 
     public static int extractRootfs(Context context, File rootfs7z) {
         long startTime = SystemClock.elapsedRealtime();
+        lastExtractError = null;
+        int entryCount = 0;
         try (SevenZFile zFile = new SevenZFile(rootfs7z)) {
             SevenZArchiveEntry entry;
             File rootfsDir = context.getDataDir();
             byte[] buffer = new byte[64 * 1024]; // 增大缓冲区到 64KB，加快解压
             
             while ((entry = zFile.getNextEntry()) != null) {
+                entryCount++;
                 File outFile = new File(rootfsDir, entry.getName());
                 if (entry.isDirectory()) {
                     outFile.mkdirs();
@@ -312,10 +317,11 @@ public final class RomManager {
             // 解决方案：将 init 复制到 nativeLibraryDir（允许执行），然后用符号链接替换原位置。
             ensureExecutableInNativeLib(context);
 
-            Log.i(TAG, "extractRootfs done in " + (SystemClock.elapsedRealtime() - startTime) + "ms");
+            Log.i(TAG, "extractRootfs done: " + entryCount + " entries in " + (SystemClock.elapsedRealtime() - startTime) + "ms");
             return 0;
         } catch (Exception e) {
-            Log.e(TAG, "extract rootfs failed", e);
+            Log.e(TAG, "extract rootfs failed at entry #" + entryCount, e);
+            lastExtractError = "Failed at entry #" + entryCount + ": " + e.getClass().getSimpleName() + ": " + e.getMessage();
             return -1;
         }
     }

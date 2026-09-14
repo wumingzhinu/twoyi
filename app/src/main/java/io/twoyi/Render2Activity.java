@@ -267,11 +267,10 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                     }
 
                     if (!extractSuccess) {
-                        // Check the file that was copied to see what happened
-                        File rootfs7z = getFilesDir().getAbsoluteFile().getParentFile().toPath().resolve("files").resolve("rootfs.7z").toFile();
-                        if (!rootfs7z.exists()) rootfs7z = new File(getFilesDir(), "rootfs.7z");
+                        String detail = RomManager.lastExtractError;
+                        File rootfs7z = new File(getFilesDir(), "rootfs.7z");
                         final String sizeStr = rootfs7z.exists() ? (rootfs7z.length() / 1024 / 1024) + "MB" : "NOT FOUND";
-                        runOnUiThread(() -> mLoadingText.setText("Step 2c: EXTRACT RETURNED FALSE\nCopied rootfs.7z: " + sizeStr));
+                        runOnUiThread(() -> mLoadingText.setText("Step 2c: EXTRACT FAILED\nCopied: " + sizeStr + "\nError: " + (detail != null ? detail : "unknown")));
                         mIsExtracting.set(false);
                         return;
                     }
