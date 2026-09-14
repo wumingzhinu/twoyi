@@ -98,7 +98,8 @@ public final class RomManager {
      * 吃光 CPU 导致 boot 永远无法完成。
      *
      * 解决方案：在 vendor/etc/init/ 下创建 stub rc 文件，
-     * 定义这些缺失的 HAL 服务为持续运行的 sleep 进程。
+     * 定义这些缺失的 HAL 服务使用 nativeLibDir 中的 ELF stub 二进制。
+     * 不能用 /system/bin/sleep 因为它是 toybox 脚本，在 noexec 挂载下无法执行。
      */
     private static void createStubHalServices(Context context) {
         File vendorInitDir = new File(getVendorDir(context), "etc/init");
@@ -106,15 +107,29 @@ public final class RomManager {
             vendorInitDir.mkdirs();
         }
 
+        // 创建 hal_stub 符号链接：rootfs/system/bin/hal_stub -> nativeLibDir/libtwoyi_hal_stub.so
+        // 这样 init 启动 service 时 loader 能拦截 execve 并正确加载 ELF 二进制
+        try {
+            ApplicationInfo ai = context.getApplicationInfo();
+            File stubInLib = new File(ai.nativeLibraryDir, "libtwoyi_hal_stub.so");
+            File stubInRootfs = new File(getRootfsDir(context), "system/bin/hal_stub");
+            if (stubInLib.exists() && stubInLib.length() > 0) {
+                stubInRootfs.delete();
+                android.system.Os.symlink(stubInLib.getAbsolutePath(), stubInRootfs.getAbsolutePath());
+                Log.i(TAG, "symlinked hal_stub -> " + stubInLib.getAbsolutePath());
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "hal_stub symlink failed", t);
+        }
+
         // audio-hal-2-0: audioserver 依赖此服务，缺失会导致崩溃循环
         File audioHalRc = new File(vendorInitDir, "audio-hal-2-0.rc");
         if (!audioHalRc.exists()) {
             try (Writer w = new FileWriter(audioHalRc)) {
-                w.write("service audio-hal-2-0 /system/bin/sleep 3600\n");
+                w.write("service audio-hal-2-0 /system/bin/hal_stub\n");
                 w.write("    class hal\n");
                 w.write("    user audio\n");
                 w.write("    group audio\n");
-                w.write("    onrestart restart audioserver\n");
             } catch (IOException ignored) {
             }
         }
@@ -123,7 +138,7 @@ public final class RomManager {
         File keymasterRc = new File(vendorInitDir, "keymaster-3-0.rc");
         if (!keymasterRc.exists()) {
             try (Writer w = new FileWriter(keymasterRc)) {
-                w.write("service keymaster-3-0 /system/bin/sleep 3600\n");
+                w.write("service keymaster-3-0 /system/bin/hal_stub\n");
                 w.write("    class hal\n");
                 w.write("    user system\n");
                 w.write("    group system drmrpc\n");
