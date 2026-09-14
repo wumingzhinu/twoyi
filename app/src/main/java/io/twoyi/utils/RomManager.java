@@ -88,6 +88,39 @@ public final class RomManager {
         }
 
         createStubHalServices(context);
+
+        // 禁用没有真实硬件就会无限 crash-loop 的服务
+        // audioserver 需要 audio HAL (HIDL) → 没有 → crash → 重启 → crash 循环吃光 CPU
+        // keystore 需要 keymaster HAL → 没有 → crash → 重启 → crash 循环
+        // mediaserver 可能依赖 audioserver
+        disableCrashingServices(context);
+    }
+
+    /**
+     * 删除 audioserver/keystore/mediaserver 的 RC 文件，防止无限 crash 循环。
+     * 在没有真实硬件的容器中，这些服务永远无法正常工作，
+     * 它们的 crash-restart 循环会消耗所有 CPU 阻止 boot 完成。
+     */
+    private static void disableCrashingServices(Context context) {
+        File rootfsDir = getRootfsDir(context);
+        String[] toDisable = {
+            "system/etc/init/audioserver.rc",
+            "system/etc/init/keystore.rc",
+            "system/etc/init/mediaserver.rc",
+            "system/etc/init/mediametrics.rc",
+            "system/etc/init/mediaextractor.rc",
+        };
+        for (String path : toDisable) {
+            File f = new File(rootfsDir, path);
+            if (f.exists()) {
+                if (f.delete()) {
+                    Log.i(TAG, "disabled " + path);
+                } else {
+                    // delete 失败时写入空文件覆盖
+                    try { new FileWriter(f).close(); } catch (IOException ignored) {}
+                }
+            }
+        }
     }
 
     /**
