@@ -82,6 +82,11 @@ public final class RomManager {
         // 禁用 Zygote 的 OpenGL 预加载，避免因缺少 GPU 驱动而崩溃
         properties.setProperty("ro.zygote.disable_gl_preload", "true");
 
+        // 关键：Android init 的 zygote-start 触发器依赖此属性
+        // on nonencrypted && zygote-start → start zygote
+        // 如果 ro.crypto.state 未设置，zygote 永远不会启动，boot 卡死
+        properties.setProperty("ro.crypto.state", "unencrypted");
+
         try (Writer writer = new FileWriter(propFile)) {
             properties.store(writer, null);
         } catch (IOException ignored) {
