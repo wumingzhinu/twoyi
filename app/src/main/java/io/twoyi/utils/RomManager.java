@@ -299,10 +299,14 @@ public final class RomManager {
                 entryCount++;
                 File outFile = new File(rootfsDir, entry.getName());
                 if (entry.isDirectory()) {
-                    // If there's a FILE at this path, delete it first
-                    if (outFile.exists() && outFile.isFile()) {
-                        Log.w(TAG, "Deleting file that conflicts with directory: " + entry.getName());
-                        outFile.delete();
+                    // Delete any ancestor FILE that blocks directory creation
+                    File check = outFile;
+                    while (check != null && !check.equals(rootfsDir)) {
+                        if (check.exists() && check.isFile()) {
+                            Log.w(TAG, "Deleting file blocking directory path: " + check.getPath());
+                            check.delete();
+                        }
+                        check = check.getParentFile();
                     }
                     outFile.mkdirs();
                 } else {
@@ -312,7 +316,7 @@ public final class RomManager {
                         File ancestor = parent;
                         while (ancestor != null && !ancestor.equals(rootfsDir)) {
                             if (ancestor.exists() && ancestor.isFile()) {
-                                Log.w(TAG, "Deleting file that conflicts with directory path: " + ancestor.getName());
+                                Log.w(TAG, "Deleting file that conflicts with directory path: " + ancestor.getPath());
                                 ancestor.delete();
                             }
                             ancestor = ancestor.getParentFile();
