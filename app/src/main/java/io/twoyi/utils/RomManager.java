@@ -323,10 +323,13 @@ public final class RomManager {
                         }
                         parent.mkdirs();
                     }
-                    // If the target is a DIRECTORY but we're writing a FILE, delete the dir
+                    // If the target is a DIRECTORY but we're writing a FILE, skip
+                    // (the directory tree was already extracted and is more important)
                     if (outFile.exists() && outFile.isDirectory()) {
-                        Log.w(TAG, "Deleting directory that conflicts with file: " + entry.getName());
-                        deleteRecursive(outFile);
+                        Log.w(TAG, "Skipping file that would overwrite directory: " + entry.getName());
+                        // skip this entry - consume remaining bytes
+                        while (zFile.read(buffer) > 0) {}
+                        continue;
                     }
                     try (OutputStream os = new BufferedOutputStream(new FileOutputStream(outFile), 64 * 1024)) {
                         int len;

@@ -705,7 +705,13 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                 File rootfsDir = RomManager.getRootfsDir(getApplicationContext());
                 for (String name : new String[]{"init", "rom.ini", "system", "vendor", "data"}) {
                     File f = new File(rootfsDir, name);
-                    sb.append(name).append(": ").append(f.exists() ? "OK" : "MISSING").append("\n");
+                    if (!f.exists()) {
+                        sb.append(name).append(": MISSING\n");
+                    } else if (f.isFile() && (name.equals("vendor") || name.equals("system") || name.equals("data"))) {
+                        sb.append(name).append(": CONFLICT (is FILE, should be DIR!)\n");
+                    } else {
+                        sb.append(name).append(": OK").append(f.isDirectory() ? " (dir)" : " (file)").append("\n");
+                    }
                 }
             } catch (Throwable t) {
                 sb.append("error: ").append(t.getMessage()).append("\n");
