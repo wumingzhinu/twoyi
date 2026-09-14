@@ -286,6 +286,44 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                     }
 
                     mIsExtracting.set(false);
+
+                    // Step 3.5: Verify rootfs structure
+                    runOnUiThread(() -> mLoadingText.setText("Step 3.5: Checking rootfs structure..."));
+                    try {
+                        File rootfsDir = new File(getFilesDir(), "../rootfs");
+                        StringBuilder sb = new StringBuilder();
+                        sb.append("rootfs dir: ").append(rootfsDir.exists() ? "EXISTS" : "MISSING").append("\n");
+
+                        // Check key files
+                        String[] keyFiles = {"init", "rootfs.prop", "init.goldfish.rc", "default.prop", "proc", "sys", "dev"};
+                        for (String f : keyFiles) {
+                            File check = new File(rootfsDir, f);
+                            if (!check.exists()) {
+                                sb.append(f).append(": MISSING\n");
+                            } else if (check.isDirectory()) {
+                                sb.append(f).append(": DIR/\n");
+                            } else {
+                                sb.append(f).append(": FILE (").append(check.length()).append(")\n");
+                            }
+                        }
+
+                        // Also check if init is executable
+                        File initFile = new File(rootfsDir, "init");
+                        if (initFile.exists() && initFile.isFile()) {
+                            sb.append("init executable: ").append(initFile.canExecute() ? "YES" : "NO").append("\n");
+                        }
+
+                        // Check nativeLibDir
+                        String nativeLibDir = getApplicationInfo().nativeLibraryDir;
+                        File initInLib = new File(nativeLibDir, "libtwoyi_init.so");
+                        sb.append("libtwoyi_init.so: ").append(initInLib.exists() ? "EXISTS (" + initInLib.length() + ")" : "MISSING").append("\n");
+
+                        final String rootfsInfo = sb.toString();
+                        runOnUiThread(() -> mLoadingText.setText(rootfsInfo + "\nBooting..."));
+                    } catch (Throwable t) {
+                        runOnUiThread(() -> mLoadingText.setText("Step 3.5: rootfs check error: " + t.getMessage()));
+                    }
+
                     runOnUiThread(() -> mLoadingText.setText("Step 4: Adding SurfaceView..."));
 
                     runOnUiThread(() -> {
