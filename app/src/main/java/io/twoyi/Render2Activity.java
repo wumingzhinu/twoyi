@@ -82,6 +82,7 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
     private View mBootLogView;
 
     private final AtomicBoolean mIsExtracting = new AtomicBoolean(false);
+    private final AtomicBoolean mBootStarted = new AtomicBoolean(false);
     private int mBootRetryCount = 0;
     private static final int MAX_BOOT_RETRIES = 2;
 
@@ -152,7 +153,21 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
         mLoadingLayout.setVisibility(View.VISIBLE);
         mLoadingView.startAnimation();
 
+        // 立即显示状态文字，确保用户能看到
+        mLoadingText.setVisibility(View.VISIBLE);
+        mLoadingText.setText("Starting twoyi...");
+        mLoadingText.setTextSize(14);
+
         UITips.checkForAndroid12Plus(this, this::bootSystem);
+
+        // Fallback: 如果 5 秒内 bootSystem 没被调用（UITips 被拦截），强制启动
+        mRootView.postDelayed(() -> {
+            if (!mBootStarted.getAndSet(true)) {
+                Log.w(TAG, "UITips callback not fired in 5s, forcing bootSystem");
+                runOnUiThread(() -> mLoadingText.setText("UITips timeout, forcing boot..."));
+                bootSystem();
+            }
+        }, 5000);
 
         mSurfaceView.setOnTouchListener(this);
 
@@ -169,6 +184,22 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
     }
 
     private void bootSystem() {
+        mBootStarted.set(true);
+        try {
+            bootSystemInner();
+        } catch (Throwable t) {
+            Log.e(TAG, "bootSystem crashed", t);
+            final String err = "bootSystem CRASHED:\n" + t.getClass().getSimpleName() + ": " + t.getMessage();
+            runOnUiThread(() -> {
+                mLoadingView.stopAnimation();
+                mLoadingText.setVisibility(View.VISIBLE);
+                mLoadingText.setText(err);
+                mLoadingText.setTextSize(12);
+            });
+        }
+    }
+
+    private void bootSystemInner() {
         boolean romExist = RomManager.romExist(this);
         boolean factoryRomUpdated = RomManager.needsUpgrade(this);
         boolean forceInstall = AppKV.getBooleanConfig(getApplicationContext(), AppKV.FORCE_ROM_BE_RE_INSTALL, false);
