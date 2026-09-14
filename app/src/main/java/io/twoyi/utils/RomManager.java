@@ -301,71 +301,29 @@ public final class RomManager {
                 boolean isDirEntry = entry.isDirectory();
                 String entryName = entry.getName();
 
-                // Log first 200 entries + all vendor-related entries for debugging
-                if (entryCount <= 200 || entryName.contains("vendor")) {
-                    Log.i(TAG, "7z entry #" + entryCount + ": " + entryName
-                            + (isDirEntry ? " [DIR]" : " [FILE size=" + entry.getSize() + "]")
-                            + " -> " + outFile.getPath()
-                            + " exists=" + outFile.exists()
-                            + (outFile.exists() ? " isDir=" + outFile.isDirectory() + " isFile=" + outFile.isFile() : ""));
-                }
-
-                // CRITICAL: If outFile is already a file but this entry says it should be
-                // a directory (or has children), we MUST delete the file and skip writing
-                if (outFile.exists() && outFile.isFile()) {
-                    if (isDirEntry || entryName.endsWith("/")) {
-                        // This entry says it's a directory but a file exists — delete the file
-                        Log.w(TAG, "Entry #" + entryCount + " '" + entryName + "' is DIR but file exists at " + outFile.getPath() + " — deleting file");
-                        outFile.delete();
-                    } else {
-                        // For file entries: check if this is a known directory name that got
-                        // extracted as a file (wrong entry type in archive)
-                        String baseName = outFile.getName();
-                        if (!baseName.contains(".") && baseName.length() < 20) {
-                            if (baseName.equals("vendor") || baseName.equals("system") || baseName.equals("data")
-                                    || baseName.equals("dev") || baseName.equals("proc") || baseName.equals("sys")
-                                    || baseName.equals("etc") || baseName.equals("odm") || baseName.equals("oem")
-                                    || baseName.equals("product") || baseName.equals("apex") || baseName.equals("metadata")
-                                    || baseName.equals("config") || baseName.equals("mnt")) {
-                                Log.w(TAG, "Entry #" + entryCount + " '" + entryName + "' is FILE but '" + baseName + "' should be DIR — skipping");
-                                outFile.delete();
-                                while (zFile.read(buffer) > 0) {}
-                                skippedCount++;
-                                continue;
-                            }
-                        }
+                // Resolve path conflicts: if an ancestor is a FILE but should be a DIR,
+                // delete it. This handles rootfs.7z having e.g. 'rootfs/vendor' as a FILE
+                // while 'rootfs/vendor/etc/...' entries need it to be a directory.
+                File check = outFile.isDirectory() ? outFile : outFile.getParentFile();
+                while (check != null && !check.equals(rootfsDir)) {
+                    if (check.exists() && check.isFile()) {
+                        Log.w(TAG, "Deleting ancestor file blocking path: " + check.getPath());
+                        check.delete();
                     }
+                    check = check.getParentFile();
                 }
 
                 if (isDirEntry) {
-                    // Delete any ancestor FILE that blocks directory creation
-                    File check = outFile;
-                    while (check != null && !check.equals(rootfsDir)) {
-                        if (check.exists() && check.isFile()) {
-                            Log.w(TAG, "Deleting file blocking directory path: " + check.getPath());
-                            check.delete();
-                        }
-                        check = check.getParentFile();
-                    }
                     outFile.mkdirs();
                 } else {
                     File parent = outFile.getParentFile();
                     if (parent != null) {
-                        // If any ancestor is a FILE (not dir), delete it
-                        File ancestor = parent;
-                        while (ancestor != null && !ancestor.equals(rootfsDir)) {
-                            if (ancestor.exists() && ancestor.isFile()) {
-                                Log.w(TAG, "Deleting file that conflicts with directory path: " + ancestor.getPath());
-                                ancestor.delete();
-                            }
-                            ancestor = ancestor.getParentFile();
-                        }
                         parent.mkdirs();
                     }
-                    // If the target is a DIRECTORY but we're writing a FILE, skip
-                    // (the directory tree was already extracted and is more important)
+                    // If the target is now a DIRECTORY (from ancestor cleanup or prior extraction)
+                    // but this entry is a FILE with a known directory name, skip it.
                     if (outFile.exists() && outFile.isDirectory()) {
-                        Log.w(TAG, "Skipping file that would overwrite directory: " + entry.getName());
+                        Log.w(TAG, "Skipping file '" + entryName + "' — target is already a directory");
                         skippedCount++;
                         while (zFile.read(buffer) > 0) {}
                         continue;
@@ -379,26 +337,26 @@ public final class RomManager {
                 }
             }
 
-            // Post-extraction verification: check critical directories
-            // If vendor/system/data are still files (not directories), the rootfs is broken
+            // Post-extraction safety: ensure critical directories exist
+            // The 7z may have 'rootfs/vendor' as a FILE entry, and if there are no
+            // 'rootfs/vendor/...' sub-entries, vendor would be missing as a directory.
             File rootfsRoot = new File(rootfsDir, "rootfs");
             for (String dirName : new String[]{"vendor", "system", "data", "dev", "proc", "sys"}) {
                 File dirFile = new File(rootfsRoot, dirName);
                 if (dirFile.exists() && dirFile.isFile()) {
-                    Log.e(TAG, "POST-EXTRACT: '" + dirName + "' is a FILE (not dir)! Size=" + dirFile.length()
-                            + ". This will cause init failures. Attempting to delete...");
+                    Log.w(TAG, "POST-EXTRACT: '" + dirName + "' is a FILE — deleting and creating as directory");
                     dirFile.delete();
-                    if (dirFile.exists()) {
-                        Log.e(TAG, "POST-EXTRACT: FAILED to delete '" + dirName + "' file!");
-                        lastExtractError = "Cannot delete conflicting file: rootfs/" + dirName;
-                    } else {
-                        Log.i(TAG, "POST-EXTRACT: Deleted conflicting '" + dirName + "' file. Directory entries will recreate it on next boot.");
-                    }
-                } else if (dirFile.isDirectory()) {
-                    File[] children = dirFile.listFiles();
-                    Log.i(TAG, "POST-EXTRACT: '" + dirName + "' is dir with " + (children != null ? children.length : 0) + " children");
+                    dirFile.mkdirs();
                 } else if (!dirFile.exists()) {
-                    Log.w(TAG, "POST-EXTRACT: '" + dirName + "' does not exist!");
+                    Log.w(TAG, "POST-EXTRACT: '" + dirName + "' missing — creating directory");
+                    dirFile.mkdirs();
+                }
+                if (dirFile.isDirectory()) {
+                    File[] children = dirFile.listFiles();
+                    Log.i(TAG, "POST-EXTRACT: '" + dirName + "' OK (dir, " + (children != null ? children.length : 0) + " children)");
+                } else {
+                    Log.e(TAG, "POST-EXTRACT: '" + dirName + "' STILL not a directory!");
+                    lastExtractError = "Failed to create directory: rootfs/" + dirName;
                 }
             }
 
