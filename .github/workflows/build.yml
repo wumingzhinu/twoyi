@@ -89,14 +89,14 @@ jobs:
       run: |
         sudo apt-get install -y cmake ninja-build
         git clone --depth 1 https://github.com/google/swiftshader.git /tmp/swiftshader
-        # Patch CMakeLists.txt: find Vulkan check line and replace FATAL_ERROR with WARNING
-        LINE_NUM=$(grep -n "Platform does not support Vulkan yet" /tmp/swiftshader/CMakeLists.txt | head -1 | cut -d: -f1)
-        if [ -n "$LINE_NUM" ]; then
-          sed -i "${LINE_NUM}s/FATAL_ERROR/WARNING/" /tmp/swiftshader/CMakeLists.txt
-          echo "Patched line $LINE_NUM: FATAL_ERROR -> WARNING"
-        else
-          echo "Warning: Could not find Vulkan check in CMakeLists.txt"
-        fi
+        # Patch ALL CMakeLists.txt files: find Vulkan check and replace FATAL_ERROR with WARNING
+        find /tmp/swiftshader -name "CMakeLists.txt" -exec grep -l "Platform does not support Vulkan yet" {} \; | while read f; do
+          LINE_NUM=$(grep -n "Platform does not support Vulkan yet" "$f" | head -1 | cut -d: -f1)
+          if [ -n "$LINE_NUM" ]; then
+            sed -i "${LINE_NUM}s/FATAL_ERROR/WARNING/" "$f"
+            echo "Patched $f line $LINE_NUM: FATAL_ERROR -> WARNING"
+          fi
+        done
         mkdir -p /tmp/swiftshader/build
         cd /tmp/swiftshader/build
         cmake .. -GNinja \
