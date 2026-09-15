@@ -89,12 +89,14 @@ jobs:
       run: |
         sudo apt-get install -y cmake ninja-build
         for i in 1 2 3 4 5; do
-          git clone --depth 1 https://github.com/google/swiftshader.git /tmp/swiftshader && break
+          git clone --depth 1 --recurse-submodules https://github.com/google/swiftshader.git /tmp/swiftshader && break
           echo "Clone attempt $i failed, retrying..."
           rm -rf /tmp/swiftshader
           sleep 15
         done
         if [ ! -d /tmp/swiftshader ]; then echo "SwiftShader clone failed, skipping"; exit 0; fi
+        # Checkout submodules (llvm-subzero)
+        git -C /tmp/swiftshader submodule update --init --depth 1 -- third_party/llvm-subzero || echo "submodule checkout failed"
         find /tmp/swiftshader -name "CMakeLists.txt" -exec grep -l "Platform does not support Vulkan yet" {} \; | while read f; do
           LINE_NUM=$(grep -n "Platform does not support Vulkan yet" "$f" | head -1 | cut -d: -f1)
           [ -n "$LINE_NUM" ] && sed -i "${LINE_NUM}s/FATAL_ERROR/WARNING/" "$f"
@@ -107,7 +109,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release \
           -DSWIFTSHADER_BUILD_TESTS=OFF \
           -DSWIFTSHADER_BUILD_BENCHMARKS=OFF \
-          -DREACTOR_BACKEND=Interpreter \
+          -DREACTOR_BACKEND=Subzero \
           -DSWIFTSHADER_ENABLE_ASTC=OFF
         ninja || echo "SwiftShader build failed, continuing without it"
         find . \( -name "libEGL_swiftshader.so" -o -name "libGLESv2_swiftshader.so" -o -name "libGLESv1_CM_swiftshader.so" \) \
