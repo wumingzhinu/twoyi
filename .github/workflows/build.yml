@@ -92,7 +92,10 @@ jobs:
       run: |
         for attempt in 1 2 3 4 5; do
           echo "=== Rust build attempt $attempt ==="
-          sh build_rs.sh --release && echo "Build succeeded on attempt $attempt" && break
+          if sh build_rs.sh --release; then
+            echo "Build succeeded on attempt $attempt"
+            break
+          fi
           echo "Build failed on attempt $attempt, retrying in 30s..."
           sleep 30
         done
@@ -101,7 +104,10 @@ jobs:
       run: |
         for attempt in 1 2 3 4 5; do
           echo "=== Gradle build attempt $attempt ==="
-          ./gradlew assembleDebug assembleRelease && echo "APK build succeeded on attempt $attempt" && break
+          if ./gradlew assembleDebug assembleRelease; then
+            echo "APK build succeeded on attempt $attempt"
+            break
+          fi
           echo "APK build failed on attempt $attempt, retrying in 30s..."
           sleep 30
         done
