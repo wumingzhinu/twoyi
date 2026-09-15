@@ -89,7 +89,13 @@ jobs:
 
     - name: Build Rust libraries
       working-directory: app/rs
-      run: sh build_rs.sh --release
+      run: |
+        for attempt in 1 2 3 4 5; do
+          echo "=== Rust build attempt $attempt ==="
+          sh build_rs.sh --release && echo "Build succeeded on attempt $attempt" && break
+          echo "Build failed on attempt $attempt, retrying in 30s..."
+          sleep 30
+        done
 
     - name: Build APK
       run: ./gradlew assembleDebug assembleRelease
