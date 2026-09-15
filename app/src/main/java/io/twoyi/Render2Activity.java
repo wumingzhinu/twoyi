@@ -858,11 +858,63 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
             }
             sb.append("\n");
 
+            // 进程枚举 - 检查容器关键进程是否运行
+            sb.append("=== container processes ===\n");
+            try {
+                String[] psCmd = {"sh", "-c", "ps -A -o PID,NAME 2>/dev/null || ps -A 2>/dev/null || cat /proc/*/cmdline 2>/dev/null | tr '\\0' ' '"};
+                Process ps = Runtime.getRuntime().exec(psCmd);
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(ps.getInputStream()))) {
+                    String line;
+                    String[] keywords = {"surfaceflinger", "zygote", "system_server", "servicemanager", "hwservicemanager", "init", "logd", "vold", "netd"};
+                    while ((line = reader.readLine()) != null) {
+                        String lower = line.toLowerCase();
+                        for (String kw : keywords) {
+                            if (lower.contains(kw)) {
+                                sb.append(line).append("\n");
+                                break;
+                            }
+                        }
+                    }
+                }
+                ps.waitFor();
+            } catch (Throwable t) {
+                sb.append("process list error: ").append(t.getMessage()).append("\n");
+            }
+            sb.append("\n");
+
+            // named pipe 状态
+            sb.append("=== named pipes ===\n");
+            try {
+                String rootfs = "/data/data/io.twoyi/rootfs";
+                for (String name : new String[]{"opengles", "opengles2", "opengles3"}) {
+                    String path = rootfs + "/" + name;
+                    File f = new File(path);
+                    sb.append(name + ": exists=" + f.exists());
+                    if (f.exists()) {
+                        sb.append(" isFifo=" + f.isFile());
+                        // 尝试获取文件状态
+                        try {
+                            Process stat = Runtime.getRuntime().exec(new String[]{"sh", "-c", "ls -la " + path + " 2>&1"});
+                            try (BufferedReader sr = new BufferedReader(new InputStreamReader(stat.getInputStream()))) {
+                                String sl = sr.readLine();
+                                if (sl != null) sb.append(" | " + sl);
+                            }
+                            stat.waitFor();
+                        } catch (Throwable ignored) {}
+                    }
+                    sb.append("\n");
+                }
+            } catch (Throwable t) {
+                sb.append("pipe check error: ").append(t.getMessage()).append("\n");
+            }
+            sb.append("\n");
+
             // 容器 log.txt
             sb.append("=== container log.txt ===\n");
             try {
                 File containerLog = new File(getDataDir(), "log.txt");
                 if (containerLog.exists()) {
+                    sb.append("size: " + containerLog.length() + " bytes, lastModified: " + new java.text.SimpleDateFormat("HH:mm:ss").format(new Date(containerLog.lastModified())) + "\n");
                     try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(containerLog)))) {
                         String line;
                         int count = 0;
