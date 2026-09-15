@@ -82,6 +82,10 @@ public final class RomManager {
         // 禁用 Zygote 的 OpenGL 预加载，避免因缺少 GPU 驱动而崩溃
         properties.setProperty("ro.zygote.disable_gl_preload", "true");
 
+        // 使用 SwiftShader 软件 GPU 驱动（CI 编译，通过 jniLibs 交付）
+        // Android libEGL.so 会加载 system/lib64/egl/libEGL_<ro.hardware.egl>.so
+        properties.setProperty("ro.hardware.egl", "swiftshader");
+
         // 关键：Android init 的 zygote-start 触发器依赖此属性
         // on nonencrypted && zygote-start → start zygote
         // 如果 ro.crypto.state 未设置，zygote 永远不会启动，boot 卡死
@@ -93,6 +97,7 @@ public final class RomManager {
         }
 
         createStubHalServices(context);
+        createSwiftShaderSymlinks(context);
 
         // 修复：在 init.goldfish.rc 中添加 class_start core 触发器
         // init.rc 中 class_start core 被注释掉了，依赖 property 触发器
@@ -166,6 +171,36 @@ public final class RomManager {
             Log.i(TAG, "Patched init.goldfish.rc: added class_start core");
         } catch (IOException e) {
             Log.e(TAG, "Failed to patch init.goldfish.rc", e);
+        }
+    }
+
+    /**
+     * 创建 SwiftShader EGL/GLES 库的符号链接。
+     * SwiftShader 库在 nativeLibDir（APK 安装时自动解压），
+     * 需要在 rootfs 的 egl 目录创建符号链接让容器内 libEGL.so 能找到它们。
+     * nativeLibDir 路径在宿主上可访问，系统 linker 可解析符号链接加载库。
+     */
+    private static void createSwiftShaderSymlinks(Context context) {
+        ApplicationInfo ai = context.getApplicationInfo();
+        File eglDir = new File(getRootfsDir(context), "system/lib64/egl");
+        if (!eglDir.exists()) {
+            eglDir.mkdirs();
+        }
+        String[] libs = {"libEGL_swiftshader.so", "libGLESv2_swiftshader.so", "libGLESv1_CM_swiftshader.so"};
+        for (String lib : libs) {
+            File src = new File(ai.nativeLibraryDir, lib);
+            File dst = new File(eglDir, lib);
+            if (src.exists() && src.length() > 0) {
+                dst.delete();
+                try {
+                    android.system.Os.symlink(src.getAbsolutePath(), dst.getAbsolutePath());
+                    Log.i(TAG, "symlinked " + lib + " -> " + src.getAbsolutePath());
+                } catch (Throwable t) {
+                    Log.w(TAG, "symlink failed for " + lib, t);
+                }
+            } else {
+                Log.w(TAG, "SwiftShader lib not found: " + src.getAbsolutePath());
+            }
         }
     }
 

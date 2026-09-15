@@ -231,10 +231,6 @@ fn renderer_init_inner(
             match Command::new(init_path)
                 .current_dir(working_dir)
                 .env("TYLOADER", &loader_path)
-                .env("LD_LIBRARY_PATH", format!(
-                    "{}/system/lib64:{}/system/lib:{}/vendor/lib64:{}/vendor/lib",
-                    working_dir, working_dir, working_dir, working_dir
-                ))
                 .stdout(Stdio::from(out))
                 .stderr(Stdio::from(err))
                 .spawn()
