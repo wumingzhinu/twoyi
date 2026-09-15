@@ -97,6 +97,59 @@ jobs:
             echo "Patched $f line $LINE_NUM: FATAL_ERROR -> WARNING"
           fi
         done
+        # Create stub LLVM config headers for Subzero backend (not generated for Android)
+        mkdir -p /tmp/swiftshader/third_party/llvm-subzero/include/llvm/Config
+        cat > /tmp/swiftshader/third_party/llvm-subzero/include/llvm/Config/llvm-config.h << 'EOF'
+#ifndef LLVM_CONFIG_LLVM_CONFIG_H
+#define LLVM_CONFIG_LLVM_CONFIG_H
+#define LLVM_VERSION_MAJOR 10
+#define LLVM_VERSION_MINOR 0
+#define LLVM_VERSION_PATCH 0
+#define LLVM_VERSION_STRING "10.0.0"
+#define LLVM_ON_UNIX 1
+#define LLVM_NATIVE_ARCH ARM
+#define LLVM_HOST_ARCH ARM
+#define LLVM_DEFAULT_TARGET_TRIPLE "aarch64-linux-android"
+#define LLVM_HOST_TUPLE "aarch64-linux-android"
+#define LLVM_DEFAULT_TARGET_OS "Linux"
+#define LLVM_HAS_ELF_OBJECT_FORMAT 1
+#define LLVM_HAS_MACHO_OBJECT_FORMAT 0
+#define LLVM_HAS_COFF_OBJECT_FORMAT 0
+#define LLVM_ENABLE_THREADS 1
+#define LLVM_ENABLE_ABI_INSTRUMENTATION 0
+#define LLVM_ENABLE_ZLIB 0
+#define LLVM_ENABLE_LIBXML2 0
+#define LLVM_ENABLE_TERMINFO 0
+#define LLVM_ENABLE_EDITLINE 0
+#define LLVM_ENABLE_LIBPFM 0
+#define LLVM_ENABLE_ZSTD 0
+#define LLVM_ENABLE_CURSES 0
+#define LLVM_ENABLE_OPUHL 0
+#define LLVM_ENABLE_DYGBCODING 0
+#define LLVM_ENABLE_BACKTRACES 1
+#define LLVM_ENABLE_RTTI 0
+#define LLVM_ENABLE_PIC 1
+#define LLVM_HAS_GLOBAL_ISL 0
+#define LLVM_ENABLE_ASTLE 0
+#define LLVM_ENABLE_BINDGEN 0
+#define LLVM_ENABLE_PGO_INSTRUMENT 0
+#endif
+EOF
+        mkdir -p /tmp/swiftshader/third_party/llvm-subzero/include/llvm/Support
+        cat > /tmp/swiftshader/third_party/llvm-subzero/include/llvm/Support/DataTypes.h << 'EOF'
+#ifndef LLVM_SUPPORT_DATATYPES_H
+#define LLVM_SUPPORT_DATATYPES_H
+#include <stdint.h>
+typedef uint8_t  uint8_t_;
+typedef int8_t   int8_t_;
+typedef uint16_t uint16_t_;
+typedef int16_t  int16_t_;
+typedef uint32_t uint32_t_;
+typedef int32_t  int32_t_;
+typedef uint64_t uint64_t_;
+typedef int64_t  int64_t_;
+#endif
+EOF
         mkdir -p /tmp/swiftshader/build
         cd /tmp/swiftshader/build
         cmake .. -GNinja \
@@ -106,7 +159,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release \
           -DSWIFTSHADER_BUILD_TESTS=OFF \
           -DSWIFTSHADER_BUILD_BENCHMARKS=OFF \
-          -DREACTOR_BACKEND=Interpreter \
+          -DREACTOR_BACKEND=Subzero \
           -DSWIFTSHADER_ENABLE_ASTC=OFF
         ninja
         # Find and copy SwiftShader libraries to jniLibs
