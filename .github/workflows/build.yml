@@ -89,7 +89,7 @@ jobs:
       run: |
         sudo apt-get install -y cmake ninja-build
         for i in 1 2 3 4 5; do
-          git clone --depth 1 https://github.com/nicn0s/nicn0s-swiftshader.git /tmp/swiftshader && break
+          git clone --depth 1 https://github.com/google/swiftshader.git /tmp/swiftshader && break
           echo "Clone attempt $i failed, retrying..."
           rm -rf /tmp/swiftshader
           sleep 15

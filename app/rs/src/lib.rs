@@ -25,27 +25,10 @@ mod input;
 mod renderer_bindings;
 
 fn ensure_named_pipes() {
+    // Named pipes/sockets are created by the renderer itself.
+    // We just ensure the parent directory exists.
     let working_dir = "/data/data/io.twoyi/rootfs";
-    let pipes = [
-        format!("{}/opengles", working_dir),
-        format!("{}/opengles2", working_dir),
-        format!("{}/opengles3", working_dir),
-    ];
-    for pipe in &pipes {
-        // 先删除已有文件（可能是上次遗留的 socket 或 fifo）
-        let _ = std::fs::remove_file(pipe);
-        let c_path = match CString::new(pipe.as_str()) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let ret = unsafe { libc::mkfifo(c_path.as_ptr(), 0o666) };
-        if ret == 0 {
-            info!("Created named pipe: {}", pipe);
-        } else {
-            let err = std::io::Error::last_os_error();
-            warn!("Failed to create named pipe {}: {}", pipe, err);
-        }
-    }
+    let _ = std::fs::create_dir_all(working_dir);
 }
 
 /// ## Examples
