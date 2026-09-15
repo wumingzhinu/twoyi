@@ -193,7 +193,12 @@ fn renderer_init_inner(
         };
         let working_dir = "/data/data/io.twoyi/rootfs";
         let log_path = "/data/data/io.twoyi/log.txt";
-        let outputs = match File::create(log_path) {
+        // 每次启动时清空日志文件
+        let _ = std::fs::remove_file(log_path);
+        let outputs = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path) {
             Ok(f) => f,
             Err(e) => {
                 error!("renderer_init: create log file failed: {}", e);
