@@ -19,6 +19,7 @@ use std::fs::File;
 use std::process::{Command, Stdio};
 use std::ffi::CString;
 
+mod uinput_defs;
 mod input;
 mod renderer_bindings;
 

@@ -159,6 +159,35 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
         mLoadingText.setText("Starting twoyi...");
         mLoadingText.setTextSize(14);
 
+        // 浮动诊断按钮：点击保存完整诊断日志到 Downloads（boot_fail/manual_*.txt）
+        try {
+            TextView debugBtn = new TextView(this);
+            debugBtn.setText("诊断");
+            debugBtn.setTextSize(12);
+            debugBtn.setPadding(10, 6, 10, 6);
+            debugBtn.setBackgroundColor(0x88000000);
+            debugBtn.setTextColor(0xFFFFFFFF);
+            FrameLayout.LayoutParams dlp = new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT);
+            dlp.gravity = Gravity.TOP | Gravity.END;
+            dlp.topMargin = 90;
+            dlp.rightMargin = 16;
+            debugBtn.setLayoutParams(dlp);
+            debugBtn.setOnClickListener(v -> {
+                new Thread(() -> {
+                    try {
+                        String p = dumpBootFailureLogs("manual");
+                        Log.i(TAG, "manual diagnostic saved: " + p);
+                    } catch (Throwable t) {
+                        Log.e(TAG, "manual diagnostic failed", t);
+                    }
+                }, "manual-diagnostic").start();
+            });
+            mRootView.addView(debugBtn);
+        } catch (Throwable ignored) {
+        }
+
         UITips.checkForAndroid12Plus(this, this::bootSystem);
 
         // Fallback: 如果 5 秒内 bootSystem 没被调用（UITips 被拦截），强制启动
@@ -462,7 +491,7 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                 runOnUiThread(() -> mLoadingText.setText("Boot timeout, collecting diagnostics..."));
 
                 final String diagnosticInfo = collectDiagnosticInfo();
-                dumpBootFailureLogs();
+                dumpBootFailureLogs("boot_fail");
 
                 final boolean shouldRetry = mBootFailCount.get() <= 3;
                 runOnUiThread(() -> {
@@ -490,6 +519,15 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                 mLoadingView.stopAnimation();
                 mLoadingLayout.setVisibility(View.GONE);
             });
+
+            // 即使 boot 成功也保存诊断日志（黑屏时用于定位 surfaceflinger/GPU 问题）
+            try {
+                new Thread(() -> {
+                    String p = dumpBootFailureLogs("boot_ok");
+                    Log.i(TAG, "boot_ok diagnostic: " + p);
+                }, "boot-ok-diagnostic").start();
+            } catch (Throwable ignored) {
+            }
         }, "waiting-boot").start();
     }
 
@@ -670,7 +708,7 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
         return sb.toString();
     }
 
-    private String dumpBootFailureLogs() {
+    private String dumpBootFailureLogs(String prefix) {
         String savedPath = null;
         String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
         StringBuilder sb = new StringBuilder();
@@ -861,7 +899,7 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
         try {
             String content = sb.toString();
             if (content.length() > 0) {
-                savedPath = saveLogForUser("boot_fail_" + ts + ".txt", content);
+                savedPath = saveLogForUser(prefix + "_" + ts + ".txt", content);
                 Log.i(TAG, "boot failure log: " + (savedPath != null ? savedPath : "save failed"));
             }
         } catch (Throwable e) {

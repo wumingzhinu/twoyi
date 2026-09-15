@@ -8,7 +8,7 @@ use ndk::event::MotionAction;
 use std::mem;
 use std::thread;
 use std::{io::Write};
-use uinput_sys::*;
+use crate::uinput_defs::*;
 
 use std::sync::mpsc::{ channel, Sender};
 use std::sync::Mutex;
