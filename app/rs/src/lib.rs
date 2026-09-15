@@ -121,6 +121,36 @@ fn renderer_init_inner(
     } else {
         input::start_input_system(width, height);
 
+        // 即时诊断文件 — 在 Rust renderer 路径的最开始写入
+        // 不依赖任何超时，即使 app 崩溃也能确认代码执行到这里
+        {
+            let diag_dir = "/data/data/io.twoyi/logs";
+            let _ = std::fs::create_dir_all(diag_dir);
+            let diag_path = format!("{}/renderer_start.txt", diag_dir);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let diag_content = format!(
+                "renderer_init called at epoch={}\nwidth={} height={} dpi={} fps={}\n",
+                now, width, height, xdpi, fps
+            );
+            match std::fs::write(&diag_path, &diag_content) {
+                Ok(_) => info!("Wrote diagnostic: {}", diag_path),
+                Err(e) => error!("Failed to write diagnostic: {}", e),
+            }
+
+            // 检查 named pipe 路径是否存在
+            let working_dir = "/data/data/io.twoyi/rootfs";
+            for name in &["opengles", "opengles2", "opengles3"] {
+                let pipe_path = format!("{}/{}", working_dir, name);
+                let exists = std::path::Path::new(&pipe_path).exists();
+                let meta = std::fs::metadata(&pipe_path).ok();
+                let is_fifo = meta.as_ref().map(|m| m.file_type().is_fifo()).unwrap_or(false);
+                info!("Pipe {}: exists={} is_fifo={}", name, exists, is_fifo);
+            }
+        }
+
         ensure_named_pipes();
 
         thread::spawn(move || {
@@ -136,6 +166,13 @@ fn renderer_init_inner(
                     fps as i32,
                 )
             };
+            let diag_path = "/data/data/io.twoyi/logs/renderer_result.txt";
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let result_line = format!("startOpenGLRenderer returned {} at epoch={}\n", ret, now);
+            let _ = std::fs::write(diag_path, &result_line);
             if ret == 0 {
                 error!("startOpenGLRenderer failed (returned 0)");
             } else {
@@ -196,6 +233,14 @@ fn renderer_init_inner(
                 Ok(child) => {
                     info!("init process started from {}, pid: {}", init_path, child.id());
                     spawned = true;
+                    let diag_path = "/data/data/io.twoyi/logs/init_started.txt";
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let _ = std::fs::write(diag_path, format!(
+                        "init started from={} pid={} at epoch={}\n", init_path, child.id(), now
+                    ));
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     break;
                 }
@@ -207,6 +252,15 @@ fn renderer_init_inner(
 
         if !spawned {
             error!("all init candidates failed, boot will timeout");
+            let diag_path = "/data/data/io.twoyi/logs/init_failed.txt";
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let _ = std::fs::write(diag_path, format!(
+                "all init candidates failed at epoch={}\nloader_path={}\nworking_dir={}\n",
+                now, loader_path, working_dir
+            ));
         }
     }
 }
