@@ -911,9 +911,27 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
     }
 
     /**
-     * 保存日志到公共 Downloads (MediaStore API)。
+     * 保存日志：先尝试公共 Downloads，再回退到应用内部目录（始终可用）。
      */
     private String saveLogForUser(String fileName, String content) {
+        // 方案 1：应用内部目录（不需要任何权限，始终可用）
+        try {
+            File internalFile = new File(getFilesDir(), fileName);
+            try (FileOutputStream fos = new FileOutputStream(internalFile)) {
+                fos.write(content.getBytes("UTF-8"));
+                Log.i(TAG, "log saved to internal: " + internalFile.getAbsolutePath());
+                // 同时尝试复制到公共 Downloads（不阻塞主流程）
+                tryCopyToDownloads(fileName, content);
+                return internalFile.getAbsolutePath();
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "internal save failed", t);
+        }
+        // 方案 2：直接尝试公共 Downloads（fallback）
+        return tryCopyToDownloads(fileName, content);
+    }
+
+    private String tryCopyToDownloads(String fileName, String content) {
         if (Build.VERSION.SDK_INT >= 29) {
             try {
                 ContentValues values = new ContentValues();
@@ -925,7 +943,7 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                 if (uri != null) {
                     try (OutputStream os = resolver.openOutputStream(uri)) {
                         if (os != null) {
-                            os.write(content.getBytes());
+                            os.write(content.getBytes("UTF-8"));
                             os.flush();
                         }
                     }
@@ -944,7 +962,7 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                 if (downloadsDir != null && (downloadsDir.exists() || downloadsDir.mkdirs())) {
                     File pubFile = new File(downloadsDir, fileName);
                     try (FileOutputStream fos = new FileOutputStream(pubFile)) {
-                        fos.write(content.getBytes());
+                        fos.write(content.getBytes("UTF-8"));
                     }
                     return pubFile.getAbsolutePath();
                 }
