@@ -32,6 +32,8 @@ fn ensure_named_pipes() {
         format!("{}/opengles3", working_dir),
     ];
     for pipe in &pipes {
+        // 先删除已有文件（可能是上次遗留的 socket 或 fifo）
+        let _ = std::fs::remove_file(pipe);
         let c_path = match CString::new(pipe.as_str()) {
             Ok(s) => s,
             Err(_) => continue,
@@ -41,11 +43,7 @@ fn ensure_named_pipes() {
             info!("Created named pipe: {}", pipe);
         } else {
             let err = std::io::Error::last_os_error();
-            if err.raw_os_error() == Some(libc::EEXIST) {
-                info!("Named pipe already exists: {}", pipe);
-            } else {
-                warn!("Failed to create named pipe {}: {}", pipe, err);
-            }
+            warn!("Failed to create named pipe {}: {}", pipe, err);
         }
     }
 }

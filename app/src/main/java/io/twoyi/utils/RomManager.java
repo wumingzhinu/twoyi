@@ -94,6 +94,11 @@ public final class RomManager {
 
         createStubHalServices(context);
 
+        // 修复：在 init.goldfish.rc 中添加 class_start core 触发器
+        // init.rc 中 class_start core 被注释掉了，依赖 property 触发器
+        // 但容器中 property 系统可能不工作，导致 surfaceflinger 永远不启动
+        patchInitGoldfishRc(context);
+
         // 禁用没有真实硬件就会无限 crash-loop 的服务
         // audioserver 需要 audio HAL (HIDL) → 没有 → crash → 重启 → crash 循环吃光 CPU
         // keystore 需要 keymaster HAL → 没有 → crash → 重启 → crash 循环
@@ -125,6 +130,42 @@ public final class RomManager {
                     try { new FileWriter(f).close(); } catch (IOException ignored) {}
                 }
             }
+        }
+    }
+
+    /**
+     * 在 init.goldfish.rc 中添加 class_start core 触发器。
+     *
+     * init.rc 中 class_start core 被注释掉了，只在 on property:init.svc.servicemanager=running 时触发。
+     * 但容器中 property 系统可能不工作，导致 surfaceflinger 永远不启动 → 黑屏。
+     *
+     * 修复：在 init.goldfish.rc 的 on post-fs-data 阶段直接执行 class_start core。
+     */
+    private static void patchInitGoldfishRc(Context context) {
+        File rootfsDir = getRootfsDir(context);
+        File goldfishRc = new File(rootfsDir, "init.goldfish.rc");
+        if (!goldfishRc.exists()) {
+            Log.w(TAG, "init.goldfish.rc not found, skipping patch");
+            return;
+        }
+
+        try {
+            String content = new String(java.nio.file.Files.readAllBytes(goldfishRc.toPath()));
+            if (content.contains("class_start core")) {
+                Log.i(TAG, "init.goldfish.rc already has class_start core");
+                return;
+            }
+            // 在 on post-fs-data 阶段添加 class_start core
+            // 如果文件没有 on post-fs-data，就追加一个新的
+            if (content.contains("on post-fs-data")) {
+                content = content.replace("on post-fs-data", "on post-fs-data\n    class_start core");
+            } else {
+                content = content + "\n\non post-fs-data\n    class_start core\n";
+            }
+            java.nio.file.Files.write(goldfishRc.toPath(), content.getBytes());
+            Log.i(TAG, "Patched init.goldfish.rc: added class_start core");
+        } catch (IOException e) {
+            Log.e(TAG, "Failed to patch init.goldfish.rc", e);
         }
     }
 
