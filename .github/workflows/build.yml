@@ -98,7 +98,13 @@ jobs:
         done
 
     - name: Build APK
-      run: ./gradlew assembleDebug assembleRelease
+      run: |
+        for attempt in 1 2 3 4 5; do
+          echo "=== Gradle build attempt $attempt ==="
+          ./gradlew assembleDebug assembleRelease && echo "APK build succeeded on attempt $attempt" && break
+          echo "APK build failed on attempt $attempt, retrying in 30s..."
+          sleep 30
+        done
 
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
