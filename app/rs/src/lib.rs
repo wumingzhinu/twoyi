@@ -10,6 +10,7 @@ use log::{error, info, warn, Level, debug};
 use ndk_sys;
 use std::ffi::c_void;
 
+use std::os::unix::fs::FileTypeExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 

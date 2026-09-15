@@ -2,8 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use libc::*;
-use libc::{c_char, c_int};
+use libc::{c_char, c_int, clock_gettime, timeval, CLOCK_MONOTONIC};
 use ndk::event::MotionAction;
 use std::mem;
 use std::thread;
@@ -31,7 +30,7 @@ const KEY_PATH: &'static str = "/data/data/io.twoyi/rootfs/dev/input/key0";
 struct device_info {
     name: [c_char; 80],
     driver_version: c_int,
-    id: input_id,
+    id: UinputInputId,
     physical_location: [c_char; 80],
     unique_id: [c_char; 80],
     key_bitmask: [u8; (KEY_MAX as usize + 1) / 8],
@@ -61,8 +60,8 @@ fn copy_to_cstr<const COUNT: usize>(data: &str, arr: &mut [u8; COUNT]) {
 
 const MAX_POINTERS: usize = 5;
 
-static INPUT_SENDER: Lazy<Mutex<Option<Sender<input_event>>>> = Lazy::new(|| { Mutex::new(None)});
-static KEY_SENDER: Lazy<Mutex<Option<Sender<input_event>>>> = Lazy::new(|| { Mutex::new(None)});
+static INPUT_SENDER: Lazy<Mutex<Option<Sender<libc::input_event>>>> = Lazy::new(|| { Mutex::new(None)});
+static KEY_SENDER: Lazy<Mutex<Option<Sender<libc::input_event>>>> = Lazy::new(|| { Mutex::new(None)});
 
 pub fn start_input_system(width: i32, height: i32) {
     thread::spawn(move || {
@@ -74,9 +73,9 @@ pub fn start_input_system(width: i32, height: i32) {
 }
 
 pub fn input_event_write(
-    tx: &std::sync::mpsc::Sender<input_event>,
-    kind: i32,
-    code: i32,
+    tx: &std::sync::mpsc::Sender<libc::input_event>,
+    kind: u32,
+    code: u32,
     val: i32,
 ) {
     let mut tp = libc::timespec { tv_sec:0, tv_nsec: 0 };
@@ -86,8 +85,8 @@ pub fn input_event_write(
         tv_usec: tp.tv_nsec / 1000
     };
 
-    let ev = input_event {
-        kind: kind as u16,
+    let ev = libc::input_event {
+        type_: kind as u16,
         code: code as u16,
         value: val,
         time: tv,
@@ -168,7 +167,7 @@ pub fn handle_touch_primitives(
                         input_event_write(fd, EV_ABS, ABS_MT_POSITION_X, px as i32);
                         input_event_write(fd, EV_ABS, ABS_MT_POSITION_Y, py as i32);
                         input_event_write(fd, EV_ABS, ABS_MT_PRESSURE, pp as i32);
-                        input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT);
+                        input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT as i32);
                     }
                     index = index + 1;
                 }
@@ -184,7 +183,7 @@ pub fn handle_touch_primitives(
                         mt[index] = 0;
                         input_event_write(fd, EV_ABS, ABS_MT_SLOT, index.try_into().unwrap());
                         input_event_write(fd, EV_ABS, ABS_MT_TRACKING_ID, -1);
-                        input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT);
+                        input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT as i32);
                     }
                     index = index + 1;
                 }
@@ -206,7 +205,7 @@ pub fn handle_touch_primitives(
                         input_event_write(fd, EV_ABS, ABS_MT_POSITION_X, px as i32);
                         input_event_write(fd, EV_ABS, ABS_MT_POSITION_Y, py as i32);
                         input_event_write(fd, EV_ABS, ABS_MT_PRESSURE, pp as i32);
-                        input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT);
+                        input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT as i32);
                     }
 
                     index = index + 1;
@@ -224,7 +223,7 @@ pub fn handle_touch_primitives(
                 mt[pointer_id] = 0;
                 input_event_write(fd, EV_ABS, ABS_MT_SLOT, pointer_id as i32);
                 input_event_write(fd, EV_ABS, ABS_MT_TRACKING_ID, -1);
-                input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT);
+                input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT as i32);
             }
             _ => {}
         }
@@ -232,7 +231,7 @@ pub fn handle_touch_primitives(
 }
 
 fn generate_touch_device(width: i32, height: i32) -> device_info {
-    let iid = input_id {
+    let iid = UinputInputId {
         product: 0x1,
         version: 0,
         vendor: 0,
@@ -300,7 +299,7 @@ fn touch_server(width: i32, height: i32) {
 
                 let _ = stream.write_all(unsafe { any_as_u8_slice(&device) });
 
-                let (tx, rx) = channel::<input_event>();
+                let (tx, rx) = channel::<libc::input_event>();
                 if let Ok(mut guard) = INPUT_SENDER.lock() {
                     *guard = Some(tx);
                 }
@@ -345,7 +344,7 @@ pub fn send_key_code(_keycode: i32) {
     };
     if let Some(ref tx) = *guard {
         input_event_write(tx, EV_KEY, KEY_BACK, 1);
-        input_event_write(tx, EV_SYN, SYN_REPORT, SYN_REPORT);
+        input_event_write(tx, EV_SYN, SYN_REPORT, SYN_REPORT as i32);
         input_event_write(tx, EV_KEY, KEY_BACK, 0);
     }
 }
@@ -367,7 +366,7 @@ fn key_server() {
 
                 let _ = stream.write_all(unsafe { any_as_u8_slice(&device) });
 
-                let (tx, rx) = channel::<input_event>();
+                let (tx, rx) = channel::<libc::input_event>();
                 if let Ok(mut guard) = KEY_SENDER.lock() {
                     *guard = Some(tx);
                 }
