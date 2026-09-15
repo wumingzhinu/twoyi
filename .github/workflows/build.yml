@@ -107,23 +107,30 @@ jobs:
         done
         echo "=== APK output files ==="
         find app/build/outputs -name "*.apk" -ls 2>/dev/null || echo "No APK files found"
+        # Copy all APKs to a known flat directory
+        mkdir -p apk-output
+        find app/build/outputs -name "*.apk" -exec cp {} apk-output/ \;
+        echo "=== Copied APKs ==="
+        ls -la apk-output/ 2>/dev/null || echo "No APKs copied"
 
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
       with:
         name: twoyi-debug-apk
-        path: app/build/outputs/apk/debug/*.apk
+        path: apk-output/*.apk
         retention-days: 7
+        if-no-files-found: warn
 
     - name: Upload Release APK
       uses: actions/upload-artifact@v4
       with:
         name: twoyi-release-apk
-        path: app/build/outputs/apk/release/*.apk
+        path: apk-output/*.apk
         retention-days: 30
+        if-no-files-found: warn
 
     - name: Create GitHub Release
-      if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ci-latest
@@ -133,7 +140,5 @@ jobs:
           - Android 7-16 compatible (API 24-36)
           - Portrait orientation
           - Debug & Release APKs
-        files: |
-          app/build/outputs/apk/debug/*.apk
-          app/build/outputs/apk/release/*.apk
+        files: apk-output/*.apk
         make_latest: true
