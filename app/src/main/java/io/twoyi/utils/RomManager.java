@@ -82,10 +82,6 @@ public final class RomManager {
         // 禁用 Zygote 的 OpenGL 预加载，避免因缺少 GPU 驱动而崩溃
         properties.setProperty("ro.zygote.disable_gl_preload", "true");
 
-        // 使用 SwiftShader 软件 GPU 驱动（CI 编译，通过 jniLibs 交付）
-        // Android libEGL.so 会加载 system/lib64/egl/libEGL_<ro.hardware.egl>.so
-        properties.setProperty("ro.hardware.egl", "swiftshader");
-
         // 关键：Android init 的 zygote-start 触发器依赖此属性
         // on nonencrypted && zygote-start → start zygote
         // 如果 ro.crypto.state 未设置，zygote 永远不会启动，boot 卡死
@@ -97,7 +93,6 @@ public final class RomManager {
         }
 
         createStubHalServices(context);
-        createSwiftShaderSymlinks(context);
 
         // 禁用没有真实硬件就会无限 crash-loop 的服务
         // audioserver 需要 audio HAL (HIDL) → 没有 → crash → 重启 → crash 循环吃光 CPU
@@ -186,30 +181,6 @@ public final class RomManager {
                 w.write("    user system\n");
                 w.write("    group system drmrpc\n");
             } catch (IOException ignored) {
-            }
-        }
-    }
-
-    private static void createSwiftShaderSymlinks(Context context) {
-        ApplicationInfo ai = context.getApplicationInfo();
-        File eglDir = new File(getRootfsDir(context), "rootfs/system/lib64/egl");
-        if (!eglDir.exists()) {
-            eglDir.mkdirs();
-        }
-        String[] libs = {"libEGL_swiftshader.so", "libGLESv2_swiftshader.so", "libGLESv1_CM_swiftshader.so"};
-        for (String lib : libs) {
-            File src = new File(ai.nativeLibraryDir, lib);
-            File dst = new File(eglDir, lib);
-            if (src.exists() && src.length() > 0) {
-                dst.delete();
-                try {
-                    android.system.Os.symlink(src.getAbsolutePath(), dst.getAbsolutePath());
-                    Log.i(TAG, "symlinked " + lib + " -> " + src.getAbsolutePath());
-                } catch (Throwable t) {
-                    Log.w(TAG, "symlink failed for " + lib, t);
-                }
-            } else {
-                Log.w(TAG, "SwiftShader lib not found: " + src.getAbsolutePath());
             }
         }
     }
