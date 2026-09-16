@@ -189,6 +189,8 @@ jobs:
           > /tmp/swiftshader/third_party/llvm-subzero/include/llvm/Support/DataTypes.h
         # Patch source files that use std::isnan/std::isinf without proper include
         sed -i '1i #include <cmath>\nusing std::isnan; using std::isinf;' /tmp/swiftshader/third_party/llvm-subzero/lib/Support/NativeFormatting.cpp
+        # Patch Timer.cpp: PRId64 macro not available without inttypes.h
+        sed -i '1i #include <inttypes.h>' /tmp/swiftshader/third_party/llvm-subzero/lib/Support/Timer.cpp
         # Patch Process.inc: replace page_size function with direct getpagesize() call
         sed -i 's/static const int (int)sysconf(_SC_PAGESIZE)/static const int page_size/g' /tmp/swiftshader/third_party/llvm-subzero/lib/Support/Unix/Process.inc
         sed -i 's/static const int page_size/static int page_size = ::getpagesize()/g' /tmp/swiftshader/third_party/llvm-subzero/lib/Support/Unix/Process.inc
