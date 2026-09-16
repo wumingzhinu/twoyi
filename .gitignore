@@ -19,3 +19,6 @@ ci129.txt
 ci130.txt
 ci130full.log
 ci132.log
+ci*.log
+ci*.zip
+ss_*.txt
