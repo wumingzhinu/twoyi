@@ -144,8 +144,7 @@ jobs:
           '#include <sys/mman.h>' \
           '#include <sys/param.h>' \
           '#include <unistd.h>' \
-          '#include <cmath>' \
-          'namespace std { using ::isnan; using ::isinf; }' \
+          '#define HAVE_GETPAGESIZE 1' \
           '#define HAVE_PRINTF_A 1' \
           '#define HAVE_SCANF_LLD 1' \
           '#define HAVE_PRINTF_LLD 1' \
@@ -190,8 +189,9 @@ jobs:
           > /tmp/swiftshader/third_party/llvm-subzero/include/llvm/Support/DataTypes.h
         # Patch source files that use std::isnan/std::isinf without proper include
         sed -i '1i #include <cmath>\nusing std::isnan; using std::isinf;' /tmp/swiftshader/third_party/llvm-subzero/lib/Support/NativeFormatting.cpp
-        # Patch Process.inc for page_size
+        # Patch Process.inc for page_size (Android doesn't define page_size macro)
         sed -i '1i #include <unistd.h>' /tmp/swiftshader/third_party/llvm-subzero/lib/Support/Unix/Process.inc
+        sed -i 's/page_size/(int)sysconf(_SC_PAGESIZE)/g' /tmp/swiftshader/third_party/llvm-subzero/lib/Support/Unix/Process.inc
         find /tmp/swiftshader -name "CMakeLists.txt" -exec grep -l "Platform does not support Vulkan yet" {} \; | while read f; do
           LINE_NUM=$(grep -n "Platform does not support Vulkan yet" "$f" | head -1 | cut -d: -f1)
           [ -n "$LINE_NUM" ] && sed -i "${LINE_NUM}s/FATAL_ERROR/WARNING/" "$f"
