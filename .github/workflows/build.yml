@@ -188,6 +188,10 @@ jobs:
           'typedef int64_t  int64_t_;' \
           '#endif' \
           > /tmp/swiftshader/third_party/llvm-subzero/include/llvm/Support/DataTypes.h
+        # Patch source files that use std::isnan/std::isinf without proper include
+        sed -i '1i #include <cmath>\nusing std::isnan; using std::isinf;' /tmp/swiftshader/third_party/llvm-subzero/lib/Support/NativeFormatting.cpp
+        # Patch Process.inc for page_size
+        sed -i '1i #include <unistd.h>' /tmp/swiftshader/third_party/llvm-subzero/lib/Support/Unix/Process.inc
         find /tmp/swiftshader -name "CMakeLists.txt" -exec grep -l "Platform does not support Vulkan yet" {} \; | while read f; do
           LINE_NUM=$(grep -n "Platform does not support Vulkan yet" "$f" | head -1 | cut -d: -f1)
           [ -n "$LINE_NUM" ] && sed -i "${LINE_NUM}s/FATAL_ERROR/WARNING/" "$f"
