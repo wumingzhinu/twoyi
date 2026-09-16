@@ -132,6 +132,42 @@ jobs:
           '#define LLVM_ENABLE_PGO_INSTRUMENT 0' \
           '#endif' \
           > /tmp/swiftshader/third_party/llvm-subzero/include/llvm/Config/llvm-config.h
+        printf '%s\n' \
+          '#ifndef ABI_BREAKING_H' \
+          '#define ABI_BREAKING_H' \
+          '#define LLVM_ENABLE_ABI_BREAKING_CHECKS 0' \
+          '#endif' \
+          > /tmp/swiftshader/third_party/llvm-subzero/include/llvm/Config/abi-breaking.h
+        printf '%s\n' \
+          '#ifndef CONFIG_H' \
+          '#define CONFIG_H' \
+          '#define HAVE_PRINTF_A 1' \
+          '#define HAVE_SCANF_LLD 1' \
+          '#define HAVE_PRINTF_LLD 1' \
+          '#define HAVE_SYS_STAT_H 1' \
+          '#define HAVE_FCNTL_H 1' \
+          '#define HAVE_UNISTD_H 1' \
+          '#define HAVE_STRERROR 1' \
+          '#define HAVE_STRTOLL 1' \
+          '#define HAVE_STRTOQ 1' \
+          '#define HAVE_SYS_WAIT_H 1' \
+          '#define HAVE_DIRENT_H 1' \
+          '#define HAVE_MMAP 1' \
+          '#define HAVE_PTHREAD_GETSPECIFIC 1' \
+          '#define HAVE_PTHREAD_H 1' \
+          '#define RETSIGTYPE void' \
+          '#define HAVE_INTTYPES_H 1' \
+          '#define HAVE_STDINT_H 1' \
+          '#define HAVE_UTIME_H 1' \
+          '#define HAVE_SHLWAPI_H 0' \
+          '#define SIZEOF_INT 4' \
+          '#define SIZEOF_LONG 8' \
+          '#define SIZEOF_SIZE_T 8' \
+          '#define SIZEOF_VOID_P 8' \
+          '#define SIZEOF_LONG_LONG 8' \
+          '#define SIZEOF_LONG_DOUBLE 16' \
+          '#endif' \
+          > /tmp/swiftshader/third_party/llvm-subzero/include/llvm/Config/config.h
         mkdir -p /tmp/swiftshader/third_party/llvm-subzero/include/llvm/Support
         printf '%s\n' \
           '#ifndef LLVM_SUPPORT_DATATYPES_H' \
