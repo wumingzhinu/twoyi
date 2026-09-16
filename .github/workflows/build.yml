@@ -144,6 +144,7 @@ jobs:
           '#include <sys/mman.h>' \
           '#include <sys/param.h>' \
           '#include <unistd.h>' \
+          '#include <inttypes.h>' \
           '#define HAVE_PRINTF_A 1' \
           '#define HAVE_SCANF_LLD 1' \
           '#define HAVE_PRINTF_LLD 1' \
