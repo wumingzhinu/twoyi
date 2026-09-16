@@ -78,14 +78,11 @@ public final class RomManager {
 
         properties.setProperty("ro.sf.lcd_density", String.valueOf(DisplayMetrics.DENSITY_DEVICE_STABLE));
 
-        // GPU 相关属性 - 尝试绕过 OpenGL ES 驱动缺失问题
-        // 禁用 Zygote 的 OpenGL 预加载，避免因缺少 GPU 驱动而崩溃
-        properties.setProperty("ro.zygote.disable_gl_preload", "true");
-
-        // 使用 Android 软件渲染器 (libGLES_android.so)
-        // EGL loader 查找 libEGL_${ro.hardware.egl}.so
-        // rootfs 有 libGLES_android.so，需要创建 libEGL_android.so 符号链接
-        properties.setProperty("ro.hardware.egl", "android");
+        // GPU 相关属性：使用原版 goldfish 仿真 GPU 驱动
+        // EGL loader 在 sphal 命名空间 (/vendor/lib64/egl) 中查找
+        // libEGL_${ro.hardware.egl}.so，即 vendor/lib64/egl/libEGL_emulation.so。
+        // 该驱动通过 qemu pipe/opengles socket 连接 app 侧 libOpenglRender 完成实际渲染。
+        properties.setProperty("ro.hardware.egl", "emulation");
 
         // 关键：Android init 的 zygote-start 触发器依赖此属性
         // on nonencrypted && zygote-start → start zygote
@@ -98,7 +95,8 @@ public final class RomManager {
         }
 
         createStubHalServices(context);
-        createSwiftShaderSymlinks(context);
+        restoreVendorLink(context);
+        restoreEmulationGpu(context);
 
         // 修复：在 init.goldfish.rc 中添加 class_start core 触发器
         // init.rc 中 class_start core 被注释掉了，依赖 property 触发器
@@ -176,35 +174,219 @@ public final class RomManager {
     }
 
     /**
-     * 在 egl 目录创建 libEGL_android.so 符号链接。
-     * rootfs 有 libGLES_android.so（含 EGL+GLES 函数），但 EGL loader 查找
-     * libEGL_android.so / libGLESv2_android.so / libGLESv1_CM_android.so。
-     * 创建符号链接让 EGL loader 能找到驱动。
+     * 判断 7z 条目是否为符号链接。
+     * commons-compress 1.26 的 SevenZArchiveEntry 无 isSymbolicLink() API，
+     * 但 Windows 属性的高 16 位保留了 unix st_mode：0xA000 (S_IFLNK) 表示符号链接。
+     * 实测 rootfs.7z 中 vendor 条目 attr=0xa1ff8020，即 mode=0xa1ff (S_IFLNK|0777)，
+     * 内容即链接目标（如 "system/vendor"）。已用 commons-compress 1.26.0 对真实包验证。
      */
-    private static void createSwiftShaderSymlinks(Context context) {
-        File eglDir = new File(getRootfsDir(context), "system/lib64/egl");
-        if (!eglDir.exists()) {
-            eglDir.mkdirs();
+    private static boolean isSymlinkEntry(SevenZArchiveEntry entry) {
+        try {
+            return entry.getHasWindowsAttributes()
+                    && ((entry.getWindowsAttributes() >>> 16) & 0xF000) == 0xA000;
+        } catch (Throwable t) {
+            return false;
         }
-        // libGLES_android.so 是已有的驱动，导出 EGL+GLES 函数
-        // EGL loader 查找 libEGL_android.so，创建符号链接
-        String[] links = {"libEGL_android.so", "libGLESv2_android.so", "libGLESv1_CM_android.so"};
-        File target = new File(eglDir, "libGLES_android.so");
-        if (!target.exists()) {
-            Log.w(TAG, "libGLES_android.so not found in egl dir");
-            return;
+    }
+
+    private static String readEntryAsString(SevenZFile zFile, SevenZArchiveEntry entry) {
+        try {
+            long size = entry.getSize();
+            if (size <= 0 || size > 4096) {
+                return null;
+            }
+            byte[] content = new byte[(int) size];
+            int off = 0;
+            while (off < content.length) {
+                int n = zFile.read(content, off, content.length - off);
+                if (n < 0) break;
+                off += n;
+            }
+            return new String(content, 0, off).trim();
+        } catch (Throwable t) {
+            return null;
         }
-        for (String link : links) {
-            File dst = new File(eglDir, link);
-            if (dst.exists()) {
+    }
+
+    /**
+     * 创建符号链接；若目标位置已存在（普通文件/旧链接）先删除。
+     * 不递归删除 —— 破坏性删除交给调用方显式处理。
+     */
+    private static boolean createSymlinkReplacing(String target, File linkFile) {
+        try {
+            File parent = linkFile.getParentFile();
+            if (parent != null) {
+                parent.mkdirs();
+            }
+            linkFile.delete();
+            android.system.Os.symlink(target, linkFile.getAbsolutePath());
+            return true;
+        } catch (Throwable t) {
+            Log.w(TAG, "createSymlinkReplacing failed: " + linkFile + " -> " + target, t);
+            return false;
+        }
+    }
+
+    /**
+     * 修正 rootfs/vendor 为指向 system/vendor 的符号链接。
+     *
+     * rootfs.7z 中 vendor 是符号链接（rootfs/vendor -> system/vendor），所有真实
+     * vendor 文件（GPU 驱动 egl/emulation、HAL rc、hw/ 等）都在 rootfs/system/vendor 下。
+     * 旧版本解压时把该链接当成普通 13 字节文件写入，ensureCriticalDirs 又把
+     * "vendor 文件" 删除后重建为空目录，导致容器内 /vendor 下没有任何驱动，
+     * surfaceflinger 因 "couldn't find an OpenGL ES implementation" 无限崩溃。
+     *
+     * 升级修复：旧版本把 vendor 建成了真实目录（可能含 default.prop 等生成文件），
+     * 本方法把其内容合并回 system/vendor 后替换为符号链接；已是正确链接则不动。
+     */
+    private static void restoreVendorLink(Context context) {
+        try {
+            File rootfsDir = getRootfsDir(context);
+            File vendor = new File(rootfsDir, "vendor");
+            File systemVendor = new File(rootfsDir, "system/vendor");
+            if (!systemVendor.isDirectory()) {
+                Log.w(TAG, "restoreVendorLink: system/vendor missing, cannot fix vendor link");
+                return;
+            }
+            if (isSymlinkTo(vendor, systemVendor)) {
+                Log.i(TAG, "restoreVendorLink: vendor link already OK");
+                return;
+            }
+            if (vendor.exists() && vendor.isDirectory()) {
+                // 旧版本 bug 产生的真实目录（内含 default.prop / stub rc 等 app 生成文件）。
+                // 把内容合并进 system/vendor（目标已存在则保留目标），再替换为符号链接。
+                if (!mergeDirInto(vendor, systemVendor) && listNonEmpty(vendor)) {
+                    Log.w(TAG, "restoreVendorLink: vendor dir merge incomplete, leaving as-is");
+                    return;
+                }
+                IOUtils.deleteDir(vendor);
+            } else if (vendor.exists()) {
+                vendor.delete();
+            }
+            android.system.Os.symlink("system/vendor", vendor.getAbsolutePath());
+            Log.i(TAG, "restoreVendorLink: recreated vendor -> system/vendor");
+        } catch (Throwable t) {
+            Log.w(TAG, "restoreVendorLink failed", t);
+        }
+    }
+
+    /**
+     * 把 src 目录内容移动到 dst（递归）；dst 已存在的同名条目保留 dst 版本。
+     * 返回是否全部移动成功（src 变空）。
+     */
+    private static boolean mergeDirInto(File src, File dst) {
+        if (!dst.isDirectory() && !dst.mkdirs()) {
+            return false;
+        }
+        boolean ok = true;
+        File[] children = src.listFiles();
+        if (children == null) return true;
+        for (File child : children) {
+            File target = new File(dst, child.getName());
+            if (child.isDirectory() && target.isDirectory()) {
+                ok &= mergeDirInto(child, target);
+                if (listNonEmpty(child)) {
+                    ok = false;
+                    continue;
+                }
+            } else if (target.exists()) {
+                continue; // 保留 dst 已有版本
+            } else if (!child.renameTo(target)) {
+                ok = false;
                 continue;
             }
-            try {
-                android.system.Os.symlink("libGLES_android.so", dst.getAbsolutePath());
-                Log.i(TAG, "symlinked " + link + " -> libGLES_android.so");
-            } catch (Throwable t) {
-                Log.w(TAG, "symlink failed for " + link, t);
+            if (child.isDirectory()) {
+                IOUtils.deleteDir(child);
+            } else {
+                child.delete();
             }
+        }
+        return ok;
+    }
+
+    private static boolean isSymlinkTo(File link, File target) {
+        try {
+            if (!android.system.OsConstants.S_ISLNK(
+                    android.system.Os.lstat(link.getAbsolutePath()).st_mode)) {
+                return false;
+            }
+            return link.getCanonicalPath().equals(target.getCanonicalPath());
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private static boolean listNonEmpty(File dir) {
+        String[] children = dir.list();
+        return children != null && children.length > 0;
+    }
+
+    /**
+     * 恢复原版 goldfish 仿真 GPU 驱动架构。
+     *
+     * 原版（rootfs.7z, 2022）方案：vendor/lib64/egl/lib*_emulation.so 通过
+     * qemu pipe/opengles socket 连接宿主侧 libOpenglRender（app 已内置），
+     * 这就是 twoyi 的设计渲染路径。vendor 是符号链接，驱动实际位于
+     * system/vendor/lib64/egl/。
+     *
+     * Android 8.1 EGL loader (Loader.cpp) 的加载顺序：
+     *   1. load_driver("GLES") → 扫描 libGLES_*.so，但显式跳过 libGLES_android.so
+     *      （"always skip the software renderer"），也找不到 libGLES.so → 失败
+     *   2. load_driver("EGL") → dlopen 走 android_load_sphal_library，搜索路径
+     *      /vendor/lib64/egl（sphal 命名空间）。
+     *
+     * 因此：
+     *   - 驱动必须能在 /vendor/lib64/egl 下访问到（vendor -> system/vendor 链接有效）
+     *   - ro.hardware.egl 必须是 emulation（匹配 libEGL_emulation.so）
+     *   - system/lib64/egl/libEGL_android.so 等链接没有意义，还会遮蔽
+     *     loader 的 lib*_ 匹配扫描，必须删除（libGLES_android.so 本体保留，
+     *     是 rom 的软件回退渲染器）。
+     */
+    private static void restoreEmulationGpu(Context context) {
+        File rootfsDir = getRootfsDir(context);
+
+        // 1. 删除旧版本错误创建的 system/lib64/egl 符号链接/文件
+        //    （loader 扫描 egl 目录时按 lib*_ 前缀匹配，这些假链接会干扰匹配）
+        File eglDir = new File(rootfsDir, "system/lib64/egl");
+        if (eglDir.isDirectory()) {
+            String[] badLinks = {"libEGL_android.so", "libGLESv2_android.so", "libGLESv1_CM_android.so"};
+            for (String name : badLinks) {
+                File f = new File(eglDir, name);
+                if (f.exists()) {
+                    f.delete();
+                    Log.i(TAG, "removed stale " + name);
+                }
+            }
+            // libGLES_android.so 本体是 rom 的软件回退渲染器，必须保留；
+            // 但若是旧版本创建的符号链接则删除（sphal 下无法加载且会干扰扫描）。
+            File glesAndroid = new File(eglDir, "libGLES_android.so");
+            try {
+                int mode = android.system.Os.lstat(glesAndroid.getAbsolutePath()).st_mode;
+                if (android.system.OsConstants.S_ISLNK(mode)) {
+                    glesAndroid.delete();
+                    Log.i(TAG, "removed stale libGLES_android.so symlink");
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+
+        // 2. 确认 vendor/lib64/egl 仿真驱动存在（通过 vendor 符号链接）
+        File vendorEgl = new File(rootfsDir, "vendor/lib64/egl");
+        File[] drivers = vendorEgl.isDirectory() ? vendorEgl.listFiles() : null;
+        int found = 0;
+        if (drivers != null) {
+            for (File d : drivers) {
+                String n = d.getName();
+                if (n.startsWith("libEGL_") || n.startsWith("libGLESv2_") || n.startsWith("libGLESv1_CM_")) {
+                    found++;
+                }
+            }
+        }
+        if (found > 0) {
+            Log.i(TAG, "restoreEmulationGpu: found " + found + " GL driver(s) in vendor/lib64/egl");
+        } else {
+            Log.w(TAG, "restoreEmulationGpu: no GL drivers under vendor/lib64/egl "
+                    + "(rootfs too old or extraction incomplete)");
         }
     }
 
@@ -528,6 +710,23 @@ public final class RomManager {
                     if (parent != null) {
                         parent.mkdirs();
                     }
+                    // Symbolic link entry: windows attributes low 16 bits carry
+                    // the unix mode (0xA000 = S_IFLNK); content is the target.
+                    // MUST be checked BEFORE the directory-skip below: on upgrade the
+                    // link path may already exist as an empty dir (created by old
+                    // ensureCriticalDirs), and that dir must be replaced by the link.
+                    if (isSymlinkEntry(entry)) {
+                        String linkTarget = readEntryAsString(zFile, entry);
+                        if (linkTarget != null && !linkTarget.isEmpty()) {
+                            if (createSymlinkReplacing(linkTarget, outFile)) {
+                                Log.i(TAG, "symlinked " + entryName + " -> " + linkTarget);
+                            } else {
+                                Log.w(TAG, "symlink failed for " + entryName + " -> " + linkTarget);
+                                lastExtractError = "Failed to create symlink: " + entryName;
+                            }
+                            continue;
+                        }
+                    }
                     // If the target is now a DIRECTORY (from ancestor cleanup or prior extraction)
                     // but this entry is a FILE with a known directory name, skip it.
                     if (outFile.exists() && outFile.isDirectory()) {
@@ -801,6 +1000,15 @@ public final class RomManager {
     }
 
     private static void deleteRecursive(File file) {
+        // 符号链接只 unlink 本身，不递归进目标（vendor -> system/vendor 等）
+        try {
+            int mode = android.system.Os.lstat(file.getAbsolutePath()).st_mode;
+            if (android.system.OsConstants.S_ISLNK(mode)) {
+                file.delete();
+                return;
+            }
+        } catch (Throwable ignored) {
+        }
         if (file.isDirectory()) {
             File[] children = file.listFiles();
             if (children != null) {

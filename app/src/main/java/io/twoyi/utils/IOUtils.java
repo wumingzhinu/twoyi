@@ -43,6 +43,16 @@ public class IOUtils {
         if (dir == null) {
             return false;
         }
+        // Symbolic links must be unlinked directly, never traversed:
+        // deleting e.g. rootfs/vendor (-> system/vendor) as a directory
+        // would wipe out the real vendor partition contents.
+        try {
+            int mode = android.system.Os.lstat(dir.getAbsolutePath()).st_mode;
+            if (android.system.OsConstants.S_ISLNK(mode)) {
+                return dir.delete();
+            }
+        } catch (Throwable ignored) {
+        }
         boolean success = true;
         if (dir.isDirectory()) {
             String[] children = dir.list();
