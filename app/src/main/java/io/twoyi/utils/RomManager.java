@@ -82,9 +82,10 @@ public final class RomManager {
         // 禁用 Zygote 的 OpenGL 预加载，避免因缺少 GPU 驱动而崩溃
         properties.setProperty("ro.zygote.disable_gl_preload", "true");
 
-        // 使用 SwiftShader 软件 GPU 驱动（CI 编译，通过 jniLibs 交付）
-        // Android libEGL.so 会加载 system/lib64/egl/libEGL_<ro.hardware.egl>.so
-        properties.setProperty("ro.hardware.egl", "swiftshader");
+        // 使用 Android 软件渲染器 (libGLES_android.so)
+        // EGL loader 查找 libEGL_${ro.hardware.egl}.so
+        // rootfs 有 libGLES_android.so，需要创建 libEGL_android.so 符号链接
+        properties.setProperty("ro.hardware.egl", "android");
 
         // 关键：Android init 的 zygote-start 触发器依赖此属性
         // on nonencrypted && zygote-start → start zygote
@@ -175,31 +176,34 @@ public final class RomManager {
     }
 
     /**
-     * 创建 SwiftShader EGL/GLES 库的符号链接。
-     * SwiftShader 库在 nativeLibDir（APK 安装时自动解压），
-     * 需要在 rootfs 的 egl 目录创建符号链接让容器内 libEGL.so 能找到它们。
-     * nativeLibDir 路径在宿主上可访问，系统 linker 可解析符号链接加载库。
+     * 在 egl 目录创建 libEGL_android.so 符号链接。
+     * rootfs 有 libGLES_android.so（含 EGL+GLES 函数），但 EGL loader 查找
+     * libEGL_android.so / libGLESv2_android.so / libGLESv1_CM_android.so。
+     * 创建符号链接让 EGL loader 能找到驱动。
      */
     private static void createSwiftShaderSymlinks(Context context) {
-        ApplicationInfo ai = context.getApplicationInfo();
         File eglDir = new File(getRootfsDir(context), "system/lib64/egl");
         if (!eglDir.exists()) {
             eglDir.mkdirs();
         }
-        String[] libs = {"libEGL_swiftshader.so", "libGLESv2_swiftshader.so", "libGLESv1_CM_swiftshader.so"};
-        for (String lib : libs) {
-            File src = new File(ai.nativeLibraryDir, lib);
-            File dst = new File(eglDir, lib);
-            if (src.exists() && src.length() > 0) {
-                dst.delete();
-                try {
-                    android.system.Os.symlink(src.getAbsolutePath(), dst.getAbsolutePath());
-                    Log.i(TAG, "symlinked " + lib + " -> " + src.getAbsolutePath());
-                } catch (Throwable t) {
-                    Log.w(TAG, "symlink failed for " + lib, t);
-                }
-            } else {
-                Log.w(TAG, "SwiftShader lib not found: " + src.getAbsolutePath());
+        // libGLES_android.so 是已有的驱动，导出 EGL+GLES 函数
+        // EGL loader 查找 libEGL_android.so，创建符号链接
+        String[] links = {"libEGL_android.so", "libGLESv2_android.so", "libGLESv1_CM_android.so"};
+        File target = new File(eglDir, "libGLES_android.so");
+        if (!target.exists()) {
+            Log.w(TAG, "libGLES_android.so not found in egl dir");
+            return;
+        }
+        for (String link : links) {
+            File dst = new File(eglDir, link);
+            if (dst.exists()) {
+                continue;
+            }
+            try {
+                android.system.Os.symlink("libGLES_android.so", dst.getAbsolutePath());
+                Log.i(TAG, "symlinked " + link + " -> libGLES_android.so");
+            } catch (Throwable t) {
+                Log.w(TAG, "symlink failed for " + link, t);
             }
         }
     }
