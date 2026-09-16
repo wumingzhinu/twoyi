@@ -145,6 +145,7 @@ jobs:
           '#include <sys/param.h>' \
           '#include <unistd.h>' \
           '#include <cmath>' \
+          'namespace std { using ::isnan; using ::isinf; }' \
           '#define HAVE_PRINTF_A 1' \
           '#define HAVE_SCANF_LLD 1' \
           '#define HAVE_PRINTF_LLD 1' \
