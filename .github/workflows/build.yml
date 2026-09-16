@@ -141,6 +141,10 @@ jobs:
         printf '%s\n' \
           '#ifndef CONFIG_H' \
           '#define CONFIG_H' \
+          '#include <sys/mman.h>' \
+          '#include <sys/param.h>' \
+          '#include <unistd.h>' \
+          '#include <cmath>' \
           '#define HAVE_PRINTF_A 1' \
           '#define HAVE_SCANF_LLD 1' \
           '#define HAVE_PRINTF_LLD 1' \
