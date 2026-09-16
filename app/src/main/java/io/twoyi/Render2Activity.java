@@ -92,6 +92,14 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
     /** 启动失败重试计数，超过 3 次停止自动重试，避免无限循环 */
     private final java.util.concurrent.atomic.AtomicInteger mBootFailCount = new java.util.concurrent.atomic.AtomicInteger(0);
 
+    /** 重试等待轮询是否已取消（重启 App / 重新进入界面时） */
+    private final java.util.concurrent.atomic.AtomicBoolean mRetryCancelled = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    private static final String KEY_BOOT_FAIL_COUNT = "boot_fail_count";
+
+    private static final int CONTAINER_ROOT_UID = 0;
+    private static final int CONTAINER_SYSTEM_UID = 1000;
+
     private final SurfaceHolder.Callback mSurfaceCallback = new SurfaceHolder.Callback() {
         @Override
         public void surfaceCreated(@NonNull SurfaceHolder holder) {
@@ -137,6 +145,10 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
 
         // reset state
         TwoyiStatusManager.getInstance().reset();
+
+        // 恢复跨进程重启的重试计数（超过 3 次停止自动重试），并启用重试轮询
+        mRetryCancelled.set(false);
+        mBootFailCount.set(loadBootFailCount());
 
         NavUtils.hideNavigation(getWindow());
 
@@ -462,16 +474,6 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                         }
                     }
 
-                    // Fallback: 如果 system_server 在运行，说明 boot 实际已完成
-                    // （BOOT_COMPLETED 消息可能因 init 卡在 post-fs-data 而未发送）
-                    if (elapsed >= 60 && elapsed % 10 == 0) {
-                        if (isSystemServerRunning()) {
-                            Log.i(TAG, "system_server detected at " + elapsed + "s, treating as boot success");
-                            success = true;
-                            break;
-                        }
-                    }
-
                     final int sec = elapsed;
                     runOnUiThread(() -> mLoadingText.setText("Booting... " + sec + "s / " + timeoutSeconds + "s"));
 
@@ -485,25 +487,42 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
             } catch (Throwable ignored) {
             }
 
+            if (mRetryCancelled.get()) {
+                return;
+            }
+
             if (!success) {
                 mBootFailCount.incrementAndGet();
+                saveBootFailCount(mBootFailCount.get());
                 LogEvents.trackBootFailure(getApplicationContext());
                 Log.e(TAG, "boot timeout at " + elapsed + "s, attempt " + mBootFailCount.get() + "/3");
 
                 runOnUiThread(() -> mLoadingText.setText("Boot timeout, collecting diagnostics..."));
 
-                final String diagnosticInfo = collectDiagnosticInfo();
                 dumpBootFailureLogs("boot_fail");
+                final String diagnosticInfo = collectDiagnosticInfo();
 
-                final boolean shouldRetry = mBootFailCount.get() <= 3;
+                // 失败也必须让加载层保持可见 —— 隐藏它只会露出还没画任何东西的
+                // SurfaceView（黑屏）。用短文本 + 详情按钮代替整屏日志。
                 runOnUiThread(() -> {
                     mLoadingView.stopAnimation();
-                    mLoadingText.setText(diagnosticInfo);
-                    mLoadingText.setTextSize(10);
+                    mLoadingLayout.setVisibility(View.VISIBLE);
+                    mBootLogView.setVisibility(View.GONE);
+                    mLoadingText.setVisibility(View.VISIBLE);
+                    mLoadingText.setTextSize(14);
+                    mLoadingText.setText("Boot failed (" + mBootFailCount.get() + "/3)\n"
+                            + "Container stuck — tap DETAILS for diagnostics");
+                    showDetailsButton(diagnosticInfo);
                 });
 
+                final boolean shouldRetry = mBootFailCount.get() < 3;
                 if (shouldRetry) {
                     mRootView.postDelayed(() -> {
+                        if (mRetryCancelled.get()) {
+                            return;
+                        }
+                        // 清理上一轮残留的容器进程（与 App 同 uid，会成为孤儿进程）
+                        killStaleContainerProcesses();
                         TwoyiStatusManager.getInstance().reset();
                         runOnUiThread(() -> {
                             mLoadingView.startAnimation();
@@ -517,6 +536,7 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
             }
 
             Log.i(TAG, "boot completed in " + elapsed + "s");
+            saveBootFailCount(0);
             runOnUiThread(() -> {
                 mLoadingView.stopAnimation();
                 mLoadingLayout.setVisibility(View.GONE);
@@ -531,6 +551,153 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
             } catch (Throwable ignored) {
             }
         }, "waiting-boot").start();
+    }
+
+    /**
+     * 重试计数持久化：进程被杀后重建时仍能记住失败次数，
+     * 防止 "启动失败 → 进程重启 → 再重试" 的无限循环。
+     */
+    private int loadBootFailCount() {
+        try {
+            return getSharedPreferences("app_kv", MODE_PRIVATE).getInt(KEY_BOOT_FAIL_COUNT, 0);
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
+    private void saveBootFailCount(int count) {
+        try {
+            getSharedPreferences("app_kv", MODE_PRIVATE).edit()
+                    .putInt(KEY_BOOT_FAIL_COUNT, count).apply();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // 停止 10 秒后的自动重试（用户已退出界面/销毁 Activity）
+        mRetryCancelled.set(true);
+    }
+
+    /**
+     * 失败时给用户一个"查看详情"按钮，点击后展开完整诊断文本。
+     */
+    private void showDetailsButton(final String diagnosticInfo) {
+        try {
+            TextView detailsBtn = new TextView(this);
+            detailsBtn.setText("DETAILS");
+            detailsBtn.setTextSize(12);
+            detailsBtn.setPadding(24, 12, 24, 12);
+            detailsBtn.setBackgroundColor(0x44FFFFFF);
+            detailsBtn.setTextColor(0xFFFFFFFF);
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT);
+            lp.gravity = Gravity.CENTER;
+            lp.topMargin = 160;
+            detailsBtn.setLayoutParams(lp);
+            detailsBtn.setOnClickListener(v -> {
+                mLoadingText.setTextSize(10);
+                mLoadingText.setText(diagnosticInfo);
+                detailsBtn.setVisibility(View.GONE);
+            });
+            mRootView.addView(detailsBtn);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 上一次启动超时后，容器进程（init/zygote/system_server 等）通常还活着
+     * 并成为孤儿进程，与 App 同 uid，可以直接 kill。残留进程会占用 CPU、
+     * 持有 named pipe，导致重试也更慢/更容易卡死。
+     * 只 kill 与本 App 同 uid 的进程，宿主系统进程不受影响。
+     */
+    private void killStaleContainerProcesses() {
+        final int myUid = android.os.Process.myUid();
+        int killed = 0;
+        try {
+            File procDir = new File("/proc");
+            File[] entries = procDir.listFiles();
+            if (entries == null) return;
+            for (File entry : entries) {
+                if (!entry.getName().matches("\\d+")) continue;
+                try {
+                    if (!entry.canRead()) continue;
+                    int uid = getUidFromStatus(entry);
+                    if (uid != myUid) continue;
+                    String cmdline = readCmdline(entry);
+                    if (!looksLikeContainerProcess(cmdline, myUid)) continue;
+                    int pid = Integer.parseInt(entry.getName());
+                    if (pid == android.os.Process.myPid()) continue;
+                    android.os.Process.killProcess(pid);
+                    killed++;
+                } catch (Throwable ignored) {
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        Log.i(TAG, "killStaleContainerProcesses: killed " + killed + " stale container processes");
+    }
+
+    private static boolean looksLikeContainerProcess(String cmdline, int myUid) {
+        if (cmdline == null || cmdline.isEmpty()) return false;
+        // 容器进程特征：rootfs 路径、/system/bin 等；
+        // 排除我们自己的进程和普通的 app 进程
+        if (cmdline.contains("io.twoyi")) return false;
+        if (cmdline.contains("com.termux")) return false;
+        return cmdline.contains("rootfs")
+                || cmdline.startsWith("/system/bin/")
+                || cmdline.equals("init")
+                || cmdline.contains("zygote")
+                || cmdline.contains("surfaceflinger")
+                || cmdline.contains("system_server")
+                || cmdline.contains("servicemanager")
+                || cmdline.contains("hwservicemanager")
+                || cmdline.contains("vold")
+                || cmdline.contains("netd")
+                || cmdline.contains("logd")
+                || cmdline.contains("installd")
+                || cmdline.contains("adbd")
+                || cmdline.contains("audioserver")
+                || cmdline.contains("cameraserver")
+                || cmdline.contains("mediaserver")
+                || cmdline.contains("keystore")
+                || cmdline.contains("healthd")
+                || cmdline.contains("su_daemon")
+                || cmdline.contains("lmkd")
+                || cmdline.contains("storaged")
+                || cmdline.contains("tombstoned")
+                || cmdline.contains("bootanimation");
+    }
+
+    private static String readCmdline(File procEntry) {
+        try {
+            byte[] buf = new byte[1024];
+            int len;
+            try (FileInputStream fis = new FileInputStream(new File(procEntry, "cmdline"))) {
+                len = fis.read(buf);
+            }
+            if (len <= 0) return "";
+            return new String(buf, 0, len).replace('\0', ' ').trim();
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    private static int getUidFromStatus(File procEntry) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(new File(procEntry, "status"))))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.startsWith("Uid:")) {
+                    String[] parts = line.split("\\s+");
+                    if (parts.length >= 2) return Integer.parseInt(parts[1]);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return -1;
     }
 
     /**
@@ -619,6 +786,14 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                     }
                     if (len <= 0) continue;
                     String cmdline = new String(buf, 0, len);
+                    // 只认 uid 0 / 1000 的 system_server —— 容器进程。
+                    // 宿主系统自己的 system_server 也匹配 cmdline（其 cmdline
+                    // 就是 "system_server"），不区分 uid 会把宿主误判为容器，
+                    // 导致 60 秒时误报 boot 成功 → 黑屏。
+                    int uid = getUidFromStatus(entry);
+                    if (uid != CONTAINER_ROOT_UID && uid != CONTAINER_SYSTEM_UID) {
+                        continue;
+                    }
                     if (cmdline.contains("system_server")) {
                         return true;
                     }
