@@ -889,6 +889,96 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
             }
             sb.append("\n");
 
+            // renderer diagnostic files
+            sb.append("=== renderer diagnostics ===\n");
+            try {
+                String[] diagFiles = {"renderer_start.txt", "renderer_result.txt", "init_started.txt", "init_failed.txt"};
+                for (String df : diagFiles) {
+                    File f = new File("/data/data/io.twoyi/logs/" + df);
+                    if (f.exists()) {
+                        sb.append(df).append(": ").append(new String(java.nio.file.Files.readAllBytes(f.toPath()))).append("\n");
+                    } else {
+                        sb.append(df).append(": NOT FOUND\n");
+                    }
+                }
+            } catch (Throwable t) {
+                sb.append("renderer diag error: ").append(t.getMessage()).append("\n");
+            }
+            sb.append("\n");
+
+            // surfaceflinger open files (check if it connected to named pipes)
+            sb.append("=== surfaceflinger open files ===\n");
+            try {
+                File procDir = new File("/proc");
+                File[] entries = procDir.listFiles();
+                if (entries != null) {
+                    for (File entry : entries) {
+                        if (!entry.getName().matches("\\d+")) continue;
+                        try {
+                            if (getUidFromStatus(entry) != android.os.Process.myUid()) continue;
+                            String cmdline = readCmdline(entry);
+                            if (cmdline.contains("surfaceflinger")) {
+                                int pid = Integer.parseInt(entry.getName());
+                                sb.append("surfaceflinger pid: ").append(pid).append("\n");
+                                // List all open file descriptors
+                                File fdDir = new File(entry, "fd");
+                                File[] fds = fdDir.listFiles();
+                                if (fds != null) {
+                                    for (File fd : fds) {
+                                        try {
+                                            String link = android.system.Os.readlink(fd.getAbsolutePath());
+                                            sb.append("  fd ").append(fd.getName()).append(" -> ").append(link).append("\n");
+                                        } catch (Throwable ignored) {}
+                                    }
+                                }
+                                // Check /proc/PID/maps for emulation driver
+                                File maps = new File(entry, "maps");
+                                if (maps.exists() && maps.canRead()) {
+                                    try (BufferedReader mr = new BufferedReader(new InputStreamReader(new FileInputStream(maps)))) {
+                                        String line;
+                                        sb.append("  --- maps (egl/gpu related) ---\n");
+                                        while ((line = mr.readLine()) != null) {
+                                            if (line.contains("egl") || line.contains("EGL") || line.contains("emulation") 
+                                                || line.contains("GLES") || line.contains("gles") || line.contains("OpenglRender")
+                                                || line.contains("goldfish") || line.contains("qemu")) {
+                                                sb.append("  ").append(line).append("\n");
+                                            }
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                }
+            } catch (Throwable t) {
+                sb.append("surfaceflinger open files error: ").append(t.getMessage()).append("\n");
+            }
+            sb.append("\n");
+
+            // Check for tombstones in container
+            sb.append("=== container tombstones ===\n");
+            try {
+                File rootfsDir = RomManager.getRootfsDir(getApplicationContext());
+                File tombDir = new File(rootfsDir, "rootfs/data/tombstones");
+                if (tombDir.exists()) {
+                    File[] tombs = tombDir.listFiles();
+                    if (tombs != null && tombs.length > 0) {
+                        sb.append("tombstones: ").append(tombs.length).append(" files\n");
+                        for (File t : tombs) {
+                            sb.append("  ").append(t.getName()).append(" (").append(t.length()).append("b)\n");
+                        }
+                    } else {
+                        sb.append("tombstones: empty\n");
+                    }
+                } else {
+                    sb.append("tombstones dir: NOT FOUND\n");
+                }
+            } catch (Throwable t) {
+                sb.append("tombstone check error: ").append(t.getMessage()).append("\n");
+            }
+            sb.append("\n");
+
             // container log.txt
             try {
                 File containerLog = new File(getDataDir(), "log.txt");
@@ -1145,7 +1235,7 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
             // （容器 logd 输出实际落在宿主 logcat，system_server 卡死点只有这里能看到）
             sb.append("=== container process deep diagnostics ===\n");
             try {
-                String[] targets = {"system_server", "zygote", "servicemanager", "hwservicemanager", "audioserver"};
+                String[] targets = {"surfaceflinger", "system_server", "zygote", "servicemanager", "hwservicemanager", "audioserver"};
                 for (String target : targets) {
                     int pid = -1;
                     File procDir = new File("/proc");
