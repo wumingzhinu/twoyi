@@ -1145,7 +1145,7 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
             // （容器 logd 输出实际落在宿主 logcat，system_server 卡死点只有这里能看到）
             sb.append("=== container process deep diagnostics ===\n");
             try {
-                String[] targets = {"system_server", "zygote", "servicemanager", "hwservicemanager"};
+                String[] targets = {"system_server", "zygote", "servicemanager", "hwservicemanager", "audioserver"};
                 for (String target : targets) {
                     int pid = -1;
                     File procDir = new File("/proc");

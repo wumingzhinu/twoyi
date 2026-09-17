@@ -104,21 +104,66 @@ public final class RomManager {
         patchInitGoldfishRc(context);
 
         // 禁用没有真实硬件就会无限 crash-loop 的服务
-        // audioserver 需要 audio HAL (HIDL) → 没有 → crash → 重启 → crash 循环吃光 CPU
         // keystore 需要 keymaster HAL → 没有 → crash → 重启 → crash 循环
+        // 注意：audioserver 绝对不能禁用！system_server 的 AudioService 在
+        // StartAudioService 阶段同步等待 audioserver 发布的 media.audio_policy
+        // 服务（ServiceManager: Waiting for service media.audio_policy），
+        // 每秒重试、永不超时 → boot 卡死在 90% 处（真机日志已确认）。
+        // crash-loop 由 init 的重启退避控制，CPU 开销可接受；
+        // 而 media.audio_policy 缺失是致命的 boot 阻塞。
         // mediaserver 可能依赖 audioserver
         disableCrashingServices(context);
+        ensureAudioserverRc(context);
     }
 
     /**
-     * 删除 audioserver/keystore/mediaserver 的 RC 文件，防止无限 crash 循环。
-     * 在没有真实硬件的容器中，这些服务永远无法正常工作，
-     * 它们的 crash-restart 循环会消耗所有 CPU 阻止 boot 完成。
+     * 恢复可能被旧版本删除的 audioserver.rc。
+     *
+     * 旧版本曾把 audioserver.rc 当作 crash-loop 源删除，导致 system_server
+     * 的 AudioService 永远等不到 media.audio_policy（boot 卡死在 90%）。
+     * 用户设备上的 rootfs 是持久的，所以每次启动都要检查恢复。
+     */
+    public static void ensureAudioserverRc(Context context) {
+        try {
+            File rootfsDir = getRootfsDir(context);
+            File rc = new File(rootfsDir, "system/etc/init/audioserver.rc");
+            if (rc.exists()) {
+                return;
+            }
+            File bin = new File(rootfsDir, "system/bin/audioserver");
+            if (!bin.exists()) {
+                Log.w(TAG, "ensureAudioserverRc: audioserver binary missing, cannot restore rc");
+                return;
+            }
+            File parent = rc.getParentFile();
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs();
+            }
+            try (Writer w = new FileWriter(rc)) {
+                // 与 AOSP 8.1 audioserver.rc 一致（去掉 seclabel/writepid：
+                // 容器里 cpuset 不可写，服务继承 init 的 SELinux 上下文）
+                w.write("service audioserver /system/bin/audioserver\n");
+                w.write("    class core\n");
+                w.write("    user audioserver\n");
+                w.write("    group audio camera drmrpc media\n");
+                w.write("    ioprio rt 4\n");
+            }
+            Log.i(TAG, "restored audioserver.rc (was deleted by old version)");
+        } catch (Throwable t) {
+            Log.w(TAG, "ensureAudioserverRc failed", t);
+        }
+    }
+
+    /**
+     * 删除部分服务的 RC 文件，防止无限 crash 循环。
+     *
+     * 重要：audioserver 不在此列。system_server 的 AudioService 同步等待
+     * media.audio_policy，audioserver 被禁用时 boot 永远卡死在 StartAudioService
+     * （"Waiting for service media.audio_policy" 无限重试）。
      */
     private static void disableCrashingServices(Context context) {
         File rootfsDir = getRootfsDir(context);
         String[] toDisable = {
-            "system/etc/init/audioserver.rc",
             "system/etc/init/keystore.rc",
             "system/etc/init/mediaserver.rc",
             "system/etc/init/mediametrics.rc",
