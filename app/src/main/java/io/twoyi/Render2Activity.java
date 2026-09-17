@@ -21,6 +21,8 @@ package io.twoyi;
 import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.ContentValues;
+import android.content.Context;
+import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
@@ -521,15 +523,15 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
                         if (mRetryCancelled.get()) {
                             return;
                         }
-                        // 清理上一轮残留的容器进程（与 App 同 uid，会成为孤儿进程）
-                        killStaleContainerProcesses();
-                        TwoyiStatusManager.getInstance().reset();
                         runOnUiThread(() -> {
                             mLoadingView.startAnimation();
-                            mLoadingText.setText("Retrying boot...");
+                            mLoadingText.setText("Restarting app for clean retry...");
                             mLoadingText.setTextSize(12);
                         });
-                        bootSystem();
+                        // 必须重启整个 App 进程：RENDERER_STARTED 是进程内静态标志，
+                        // 且容器 init 半死后 vbinder socket 全部失效，原地重试只会
+                        // 让重启的服务集体 "Binder driver could not be opened" abort。
+                        new Thread(this::restartAppProcess, "app-restart").start();
                     }, 10000);
                 }
                 return;
@@ -608,67 +610,99 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
     }
 
     /**
-     * 上一次启动超时后，容器进程（init/zygote/system_server 等）通常还活着
-     * 并成为孤儿进程，与 App 同 uid，可以直接 kill。残留进程会占用 CPU、
-     * 持有 named pipe，导致重试也更慢/更容易卡死。
-     * 只 kill 与本 App 同 uid 的进程，宿主系统进程不受影响。
+     * 全量清理残留容器进程后重启整个 App 进程（干净的第二轮，RENDERER_STARTED
+     * 等进程内状态全部归零）。失败计数已持久化，不会无限循环。
+     */
+    private void restartAppProcess() {
+        killStaleContainerProcesses();
+        // 等内核回收进程、释放 vbinder socket
+        SystemClock.sleep(2000);
+        killStaleContainerProcesses();
+
+        Context ctx = getApplicationContext();
+        Intent intent = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
+        if (intent != null) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            try {
+                ctx.startActivity(intent);
+            } catch (Throwable ignored) {
+            }
+        }
+        // 给新进程留启动时间，然后杀掉自己
+        SystemClock.sleep(800);
+        android.os.Process.killProcess(android.os.Process.myPid());
+        System.exit(0);
+    }
+
+    /**
+     * 清理上一轮启动残留的容器进程（init/zygote/surfaceflinger/system_server 等）。
+     * 这些进程与 App 同 uid，会成为孤儿进程；若只杀服务留下 init，残留的 init
+     * 会让重启的服务因 vbinder socket 失效而集体 abort（libbinder abort 已在
+     * 日志中确认）。因此多轮清扫，并确保容器 init 本身也被杀掉。
+     * 只处理与本 App 同 uid 的进程，宿主系统进程不受影响。
      */
     private void killStaleContainerProcesses() {
         final int myUid = android.os.Process.myUid();
         int killed = 0;
-        try {
-            File procDir = new File("/proc");
-            File[] entries = procDir.listFiles();
-            if (entries == null) return;
-            for (File entry : entries) {
-                if (!entry.getName().matches("\\d+")) continue;
-                try {
-                    if (!entry.canRead()) continue;
-                    int uid = getUidFromStatus(entry);
-                    if (uid != myUid) continue;
-                    String cmdline = readCmdline(entry);
-                    if (!looksLikeContainerProcess(cmdline, myUid)) continue;
-                    int pid = Integer.parseInt(entry.getName());
-                    if (pid == android.os.Process.myPid()) continue;
-                    android.os.Process.killProcess(pid);
-                    killed++;
-                } catch (Throwable ignored) {
+        // 多轮清扫：先杀服务（变成孤儿），最后杀 init
+        for (int pass = 0; pass < 3; pass++) {
+            int killedThisPass = 0;
+            try {
+                File procDir = new File("/proc");
+                File[] entries = procDir.listFiles();
+                if (entries == null) break;
+                for (File entry : entries) {
+                    if (!entry.getName().matches("\\d+")) continue;
+                    try {
+                        if (!entry.canRead()) continue;
+                        int uid = getUidFromStatus(entry);
+                        if (uid != myUid) continue;
+                        String cmdline = readCmdline(entry);
+                        if (!looksLikeContainerProcess(cmdline)) continue;
+                        int pid = Integer.parseInt(entry.getName());
+                        if (pid == android.os.Process.myPid()) continue;
+                        android.os.Process.killProcess(pid);
+                        killed++;
+                        killedThisPass++;
+                    } catch (Throwable ignored) {
+                    }
                 }
+            } catch (Throwable ignored) {
             }
-        } catch (Throwable ignored) {
+            if (killedThisPass == 0) break;
+            SystemClock.sleep(500);
         }
         Log.i(TAG, "killStaleContainerProcesses: killed " + killed + " stale container processes");
     }
 
-    private static boolean looksLikeContainerProcess(String cmdline, int myUid) {
+    private static boolean looksLikeContainerProcess(String cmdline) {
         if (cmdline == null || cmdline.isEmpty()) return false;
-        // 容器进程特征：rootfs 路径、/system/bin 等；
-        // 排除我们自己的进程和普通的 app 进程
+        // 排除我们自己的进程（cmdline 含包名）
         if (cmdline.contains("io.twoyi")) return false;
-        if (cmdline.contains("com.termux")) return false;
-        return cmdline.contains("rootfs")
-                || cmdline.startsWith("/system/bin/")
-                || cmdline.equals("init")
-                || cmdline.contains("zygote")
-                || cmdline.contains("surfaceflinger")
-                || cmdline.contains("system_server")
-                || cmdline.contains("servicemanager")
-                || cmdline.contains("hwservicemanager")
-                || cmdline.contains("vold")
-                || cmdline.contains("netd")
-                || cmdline.contains("logd")
-                || cmdline.contains("installd")
-                || cmdline.contains("adbd")
-                || cmdline.contains("audioserver")
-                || cmdline.contains("cameraserver")
-                || cmdline.contains("mediaserver")
-                || cmdline.contains("keystore")
-                || cmdline.contains("healthd")
-                || cmdline.contains("su_daemon")
-                || cmdline.contains("lmkd")
-                || cmdline.contains("storaged")
-                || cmdline.contains("tombstoned")
-                || cmdline.contains("bootanimation");
+        // 容器 init：argv 可能是 /init、init、rootfs/init 或 libtwoyi_init.so
+        if (cmdline.equals("init") || cmdline.startsWith("/init")
+                || cmdline.startsWith("init ") || cmdline.startsWith("init\0")
+                || cmdline.contains("rootfs") || cmdline.contains("libtwoyi_init")) {
+            return true;
+        }
+        // 容器原生服务
+        if (cmdline.startsWith("/system/bin/") && !cmdline.startsWith("/system/bin/sh")) {
+            return true;
+        }
+        String[] names = {
+                "zygote", "surfaceflinger", "system_server", "servicemanager",
+                "hwservicemanager", "vndservicemanager", "vold", "netd", "logd",
+                "installd", "adbd", "audioserver", "cameraserver", "mediaserver",
+                "mediacodec", "keystore", "gatekeeper", "healthd", "su_daemon",
+                "lmkd", "storaged", "tombstoned", "bootanim", "mdnsd",
+                "thermalservice", "hidl_memory", "configstore", "gralloc",
+                "hwcomposer", "keymaster", "wifi_hal_legacy", "uncrypt", "mtpd",
+                "racoon", "debuggerd"
+        };
+        for (String n : names) {
+            if (cmdline.contains(n)) return true;
+        }
+        return false;
     }
 
     private static String readCmdline(File procEntry) {
