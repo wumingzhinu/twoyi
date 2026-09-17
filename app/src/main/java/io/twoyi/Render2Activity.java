@@ -1141,6 +1141,49 @@ public class Render2Activity extends Activity implements View.OnTouchListener {
             sb.append("\n");
 
             // logcat
+            // 容器进程深度诊断：内核阻塞点 + 按 pid 抓宿主 logcat
+            // （容器 logd 输出实际落在宿主 logcat，system_server 卡死点只有这里能看到）
+            sb.append("=== container process deep diagnostics ===\n");
+            try {
+                String[] targets = {"system_server", "zygote", "servicemanager", "hwservicemanager"};
+                for (String target : targets) {
+                    int pid = -1;
+                    File procDir = new File("/proc");
+                    File[] entries = procDir.listFiles();
+                    if (entries == null) continue;
+                    for (File entry : entries) {
+                        if (!entry.getName().matches("\\d+")) continue;
+                        try {
+                            if (getUidFromStatus(entry) != android.os.Process.myUid()) continue;
+                            if (readCmdline(entry).contains(target)) {
+                                pid = Integer.parseInt(entry.getName());
+                                break;
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    if (pid < 0) {
+                        sb.append(target).append(": not running\n");
+                        continue;
+                    }
+                    sb.append("--- ").append(target).append(" pid ").append(pid).append(" ---\n");
+                    // 每线程内核阻塞点：wchan + syscall，定位到底卡在哪个调用
+                    appendCmdOutput(sb, new String[]{"sh", "-c",
+                            "for t in /proc/" + pid + "/task/*; do "
+                                    + "name=$(cat $t/comm 2>/dev/null); "
+                                    + "w=$(cat $t/wchan 2>/dev/null); "
+                                    + "s=$(cat $t/syscall 2>/dev/null | head -c 80); "
+                                    + "echo \"  $(basename $t) $name wchan=$w syscall=$s\"; "
+                                    + "done 2>&1 | head -40"});
+                    // 该 pid 的宿主 logcat（容器进程日志走宿主 logd）
+                    sb.append("  --- logcat for pid ").append(pid).append(" ---\n");
+                    appendCmdOutput(sb, new String[]{"logcat", "-d", "-v", "time", "--pid=" + pid});
+                }
+            } catch (Throwable t) {
+                sb.append("deep diagnostics error: ").append(t.getMessage()).append("\n");
+            }
+            sb.append("\n");
+
             sb.append("=== logcat (io.twoyi) ===\n");
             appendCmdOutput(sb, new String[]{"logcat", "-d", "-v", "time"}, "io.twoyi");
             sb.append("\n");
