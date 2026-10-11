@@ -15,10 +15,9 @@ android {
 
     defaultConfig {
         applicationId "io.twoyi"
-        compileSdk 34
+        compileSdk 37
         minSdkVersion 27
-        //noinspection ExpiredTargetSdkVersion
-        targetSdkVersion 27
+        targetSdkVersion 37
         versionCode 10354
         versionName "0.5.4-${buildSerial}"
 
@@ -42,9 +41,9 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
-    packagingOptions {
+    packaging {
         jniLibs {
-            useLegacyPackaging true
+            useLegacyPackaging = false
         }
     }
     namespace 'io.twoyi'
