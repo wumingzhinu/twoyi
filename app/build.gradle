@@ -48,7 +48,11 @@ android {
     }
     packaging {
         jniLibs {
-            useLegacyPackaging = false
+            // MUST be legacy packaging: RomManager.ensureBootFiles symlinks
+            // /data/data/io.twoyi/loader64 -> nativeLibraryDir/libloader.so
+            // and the ROM init execv's TYLOADER, so libloader.so/libadb.so
+            // have to exist on disk (Installer also execs libadb.so).
+            useLegacyPackaging = true
         }
     }
     namespace 'io.twoyi'
