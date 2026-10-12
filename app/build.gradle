@@ -17,7 +17,13 @@ android {
         applicationId "io.twoyi"
         compileSdk 37
         minSdkVersion 27
-        targetSdkVersion 37
+        //noinspection ExpiredTargetSdkVersion
+        // twoyi's container bootstrap execs rootfs/init from the app-private
+        // data dir, which stock SELinux only permits for the legacy
+        // untrusted_app_27 partition. targetSdk 37 puts the process in the
+        // base untrusted_app domain and execve fails with EACCES.
+        // Keeping 27 lets the same APK boot the container on Android 8.1..17.
+        targetSdkVersion 27
         versionCode 10354
         versionName "0.5.4-${buildSerial}"
 

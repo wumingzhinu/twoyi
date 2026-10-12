@@ -116,6 +116,11 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         boolean started = TwoyiStatusManager.getInstance().isStarted();
+        try {
+            String ctx = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("/proc/self/attr/current")), "UTF-8").trim();
+            BootTrace.i(TAG, "selinux domain=" + ctx);
+        } catch (Throwable ignored) {
+        }
         BootTrace.i(TAG, "onCreate savedInstanceState=" + savedInstanceState + " isStarted=" + started);
         Log.i(TAG, "onCreate: " + savedInstanceState + " isStarted: " + started);
 
