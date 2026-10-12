@@ -120,15 +120,52 @@ pub fn renderer_init(
             Ok(s) => s.into(),
             Err(e) => {
                 error!("renderer_init: get loader path failed: {:?}", e);
+                native_trace(&format!("get loader path FAILED: {:?}", e));
                 return;
             }
         };
         let working_dir = "/data/data/io.twoyi/rootfs";
+        let init_path = "/data/data/io.twoyi/rootfs/init";
         let log_path = "/data/data/io.twoyi/log.txt";
+
+        // The ROM archive stores init with mode 0700; some extraction paths
+        // (AndroidP7zip) drop the exec bit and execve then fails with EACCES.
+        // Force the exec bit before spawning, and record attribution data so a
+        // remaining denial (mode vs SELinux) is decidable from the trace.
+        use std::os::unix::fs::PermissionsExt;
+        match std::fs::metadata(init_path) {
+            Ok(meta) => {
+                let mode = meta.permissions().mode();
+                native_trace(&format!("init mode={:o}", mode));
+                if mode & 0o111 == 0 {
+                    match std::fs::set_permissions(init_path, std::fs::Permissions::from_mode(0o755)) {
+                        Ok(_) => native_trace("chmod init 0755 ok"),
+                        Err(e) => native_trace(&format!("chmod init FAILED: {:?}", e)),
+                    }
+                }
+            }
+            Err(e) => {
+                native_trace(&format!("stat init FAILED: {:?}", e));
+                error!("renderer_init: stat {} failed: {:?}", init_path, e);
+                return;
+            }
+        }
+        if let Ok(p) = std::ffi::CString::new(init_path) {
+            if unsafe { libc::access(p.as_ptr(), libc::X_OK) } != 0 {
+                native_trace(&format!("access(X_OK) FAILED errno={:?}", std::io::Error::last_os_error()));
+            } else {
+                native_trace("access(X_OK) ok");
+            }
+        }
+        let enforce = std::fs::read_to_string("/sys/fs/selinux/enforce")
+            .unwrap_or_else(|_| "unknown".into());
+        native_trace(&format!("selinux enforce={}", enforce.trim()));
+
         let outputs = match File::create(log_path) {
             Ok(f) => f,
             Err(e) => {
                 error!("renderer_init: create {} failed: {:?}", log_path, e);
+                native_trace(&format!("create {} FAILED: {:?}", log_path, e));
                 return;
             }
         };
