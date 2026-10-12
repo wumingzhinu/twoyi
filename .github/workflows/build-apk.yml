@@ -26,6 +26,8 @@ jobs:
       ROOTFS_URL: ${{ inputs.rootfs_url || secrets.ROOTFS_URL }}
       ROM_INI_URL: ${{ inputs.rom_ini_url || secrets.ROM_INI_URL }}
       NDK_VERSION: 29.0.14206865
+      # default ROM: rootfs.7z from the rom-0.5.4 release asset of this repo
+      ROM_RELEASE_URL: https://github.com/wumingzhinu/twoyi/releases/download/rom-0.5.4/rootfs.7z
     steps:
       - uses: actions/checkout@v4
 
@@ -96,15 +98,19 @@ jobs:
           cp -f target/aarch64-linux-android/release/libtwoyi.so ../src/main/jniLibs/arm64-v8a/
           ls -l ../src/main/jniLibs/arm64-v8a/libtwoyi.so
 
-      - name: Inject container ROM (optional)
+      - name: Inject container ROM
         run: |
           mkdir -p app/src/main/assets
-          if [ -n "$ROOTFS_URL" ]; then
-            echo "Downloading rootfs.7z ..."
-            curl -fL --retry 3 -o app/src/main/assets/rootfs.7z "$ROOTFS_URL"
+          URL="$ROOTFS_URL"
+          # fall back to this repo's own release asset (rom-0.5.4)
+          [ -z "$URL" ] && URL="$ROM_RELEASE_URL"
+          if [ -n "$URL" ]; then
+            echo "Downloading rootfs.7z from: $URL"
+            curl -fL --retry 3 -o app/src/main/assets/rootfs.7z "$URL"
             ls -lh app/src/main/assets/rootfs.7z
           else
-            echo "No rootfs URL provided; APK compiles but container has no ROM."
+            echo "::error::no ROM URL available; set rootfs_url input or ROM_RELEASE_URL"
+            exit 1
           fi
           if [ -n "$ROM_INI_URL" ]; then
             curl -fL --retry 3 -o app/src/main/assets/rom.ini "$ROM_INI_URL"
