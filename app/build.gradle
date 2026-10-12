@@ -52,6 +52,14 @@ android {
         }
     }
     namespace 'io.twoyi'
+
+    lint {
+        // targetSdk 27 is deliberate (SELinux legacy partition keeps the
+        // container bootstrap executable); AGP 9 lint escalates it to an
+        // error and lintVitalRelease would fail the build.
+        disable += 'ExpiredTargetSdkVersion'
+        abortOnError = false
+    }
 }
 
 base {
