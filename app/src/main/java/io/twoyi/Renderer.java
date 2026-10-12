@@ -18,9 +18,6 @@
 
 package io.twoyi;
 
-import android.view.MotionEvent;
-import android.view.Surface;
-
 /**
  * @author weishu
  * @date 2021/10/20.
@@ -37,7 +34,14 @@ public class Renderer {
 
     public static native void removeWindow(Surface surface);
 
-    public static native void handleTouch(MotionEvent event);
+    /**
+     * Forward a touch contact to the container.
+     * action: event.getActionMasked() (mirrors AMOTION_EVENT_ACTION_* codes)
+     * pointerId/x/y/pressure: values of the pointer at the action index.
+     * Reads only public MotionEvent APIs so the hidden mNativePtr field
+     * (removed in newer Android releases) is never touched.
+     */
+    public static native void handleTouch(int action, int pointerId, float x, float y, float pressure);
 
     public static native void sendKeycode(int keycode);
 }

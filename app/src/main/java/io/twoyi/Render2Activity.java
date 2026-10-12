@@ -242,7 +242,17 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
 
     @Override
     public boolean onTouch(View v, MotionEvent event) {
-        Renderer.handleTouch(event);
+        // Translate via public APIs only; MotionEvent.mNativePtr is a hidden
+        // field that newer Android releases removed, so the native side takes
+        // plain scalars instead of the raw event object.
+        int action = event.getActionMasked();
+        int index = event.getActionIndex();
+        Renderer.handleTouch(
+                action,
+                event.getPointerId(index),
+                event.getX(index),
+                event.getY(index),
+                event.getPressure(index));
         return true;
     }
 

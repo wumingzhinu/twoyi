@@ -4,7 +4,6 @@
 
 use libc::*;
 use libc::{c_char, c_int};
-use ndk::event::{MotionAction, MotionEvent};
 use std::mem;
 use std::thread;
 use std::{io::Write};
@@ -14,7 +13,7 @@ use std::sync::mpsc::{ channel, Sender};
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
 
-use log::info;
+use log::{info, debug};
 
 const FF_MAX: u16 = 0x7f;
 
@@ -95,25 +94,34 @@ pub fn input_event_write(
     let _ = tx.send(ev);
 }
 
-pub fn handle_touch(ev: MotionEvent) {
+// AMOTION_EVENT_ACTION_* values, stable since API level 1.
+const ACTION_DOWN: i32 = 0;
+const ACTION_UP: i32 = 1;
+const ACTION_MOVE: i32 = 2;
+const ACTION_CANCEL: i32 = 3;
+const ACTION_POINTER_DOWN: i32 = 5;
+const ACTION_POINTER_UP: i32 = 6;
+
+pub fn handle_touch(action: i32, pointer_id: i32, x: f32, y: f32, pressure: f32) {
+    // Guard the MT slot table: Android may hand out pointer ids >= MAX_POINTERS
+    // with 6+ fingers on screen; the original code panicked on those.
+    if pointer_id < 0 || (pointer_id as usize) >= MAX_POINTERS {
+        return;
+    }
+
     let opt = INPUT_SENDER.lock().unwrap();
     if let Some(ref fd) = *opt {
 
-        let action = ev.action();
-        let pointer_index = ev.pointer_index();
-        let pointer = ev.pointer_at_index(pointer_index);
-        let pointer_id = pointer.pointer_id();
-        let pressure = pointer.pressure();
+        let x = x as i32;
+        let y = y as i32;
+        let pressure = pressure as i32;
 
-        // info!("action: {:#?}, pointer_index: {}", action, pointer_index);
+        // info!("action: {}, pointer_id: {}", action, pointer_id);
 
         static G_INPUT_MT: Lazy<Mutex<[i32;MAX_POINTERS]>> = Lazy::new(|| {std::sync::Mutex::new([0i32;MAX_POINTERS])});
 
         match action {
-            MotionAction::Down | MotionAction::PointerDown => {
-                let x = pointer.x();
-                let y = pointer.y();
-
+            ACTION_DOWN | ACTION_POINTER_DOWN => {
                 let mut mt = G_INPUT_MT.lock().unwrap();
                 mt[pointer_id as usize] = 1;
 
@@ -128,20 +136,17 @@ pub fn handle_touch(ev: MotionEvent) {
                             input_event_write(fd, EV_KEY, BTN_TOOL_FINGER, 108);
                         }
 
-                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_X, x as i32);
-                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_Y, y as i32);
+                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_X, x);
+                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_Y, y);
 
-                        input_event_write(fd, EV_ABS, ABS_MT_PRESSURE, pressure as i32);
+                        input_event_write(fd, EV_ABS, ABS_MT_PRESSURE, pressure);
 
                         input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT);
                     }
                     index = index + 1;
                 }
             }
-            MotionAction::Up => {
-                // let x = pointer.x();
-                // let y = pointer.y();
-
+            ACTION_UP => {
                 let mut index = 0;
                 while index != MAX_POINTERS {
                     let mut mt = G_INPUT_MT.lock().unwrap();
@@ -154,21 +159,17 @@ pub fn handle_touch(ev: MotionEvent) {
                     index = index + 1;
                 }
             }
-            MotionAction::Move => {
+            ACTION_MOVE => {
                 let mut index = 0;
 
                 while index != MAX_POINTERS {
                     let mt = G_INPUT_MT.lock().unwrap();
                     if mt[index] != 0 {
-                        let x = pointer.x();
-                        let y = pointer.y();
-                        let pressure = pointer.pressure();
-
                         input_event_write(fd, EV_ABS, ABS_MT_SLOT, index.try_into().unwrap());
-                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_X, x as i32);
-                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_Y, y as i32);
+                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_X, x);
+                        input_event_write(fd, EV_ABS, ABS_MT_POSITION_Y, y);
 
-                        input_event_write(fd, EV_ABS, ABS_MT_PRESSURE, pressure as i32);
+                        input_event_write(fd, EV_ABS, ABS_MT_PRESSURE, pressure);
 
                         input_event_write(fd, EV_SYN, SYN_REPORT, SYN_REPORT);
                     }
@@ -176,10 +177,7 @@ pub fn handle_touch(ev: MotionEvent) {
                     index = index + 1;
                 }
             }
-            MotionAction::Cancel | MotionAction::PointerUp => {
-                // let x = pointer.x();
-                // let y = pointer.y();
-
+            ACTION_CANCEL | ACTION_POINTER_UP => {
                 let mut mt = G_INPUT_MT.lock().unwrap();
                 if mt[pointer_id as usize] == 0 {
                     return;
@@ -293,11 +291,15 @@ fn generate_key_device() -> device_info {
     info
 }
 
-pub fn send_key_code(_keycode: i32) {
+pub fn send_key_code(keycode: i32) {
+    debug!("send key code: {}", keycode);
     if let Some(ref tx) = *KEY_SENDER.lock().unwrap() {
-        input_event_write(tx, EV_KEY, KEY_BACK, 1);
+        // KEYCODE_HOME(3) means HOME; everything else falls back to BACK.
+        let ev_key = if keycode == 3 { KEY_HOME } else { KEY_BACK };
+        input_event_write(tx, EV_KEY, ev_key, 1);
         input_event_write(tx, EV_SYN, SYN_REPORT, SYN_REPORT);
-        input_event_write(tx, EV_KEY, KEY_BACK, 0);
+        input_event_write(tx, EV_KEY, ev_key, 0);
+        input_event_write(tx, EV_SYN, SYN_REPORT, SYN_REPORT);
     }
 }
 

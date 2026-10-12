@@ -2,7 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use jni::objects::JValue;
 use jni::sys::{jclass, jfloat, jint, jobject, JNI_ERR, jstring};
 use jni::JNIEnv;
 use jni::{JavaVM, NativeMethod};
@@ -135,19 +134,20 @@ pub fn renderer_remove_window(env: JNIEnv, _clz: jclass, surface: jobject) {
 }
 
 #[no_mangle]
-pub fn handle_touch(env: JNIEnv, _clz: jclass, event: jobject) {
-    // TODO: cache the field id.
-    let ptr = env.get_field(event, "mNativePtr", "J").unwrap();
-
-    if let JValue::Long(p) = ptr {
-        let ev = unsafe {
-            let nonptr =
-            std::ptr::NonNull::new(std::mem::transmute::<i64, *mut ndk_sys::AInputEvent>(p))
-                .unwrap();
-            ndk::event::MotionEvent::from_ptr(nonptr)
-        };
-        input::handle_touch(ev)
-    }
+pub fn handle_touch(
+    _env: JNIEnv,
+    _clz: jclass,
+    action: jint,
+    pointer_id: jint,
+    x: jfloat,
+    y: jfloat,
+    pressure: jfloat,
+) {
+    // The container used to receive the raw MotionEvent object, which required
+    // reading the hidden MotionEvent.mNativePtr field. That field no longer
+    // exists on newer Android releases, so Java now translates the event into
+    // plain scalars (see Render2Activity.onTouch / Renderer.java).
+    input::handle_touch(action, pointer_id, x, y, pressure);
 }
 
 pub fn send_key_code(_env: JNIEnv, _clz: jclass, keycode: jint) {
@@ -206,7 +206,7 @@ unsafe fn JNI_OnLoad(jvm: JavaVM, _reserved: *mut c_void) -> jint {
             renderer_remove_window,
             "(Landroid/view/Surface;)V"
         ),
-        jni_method!(handleTouch, handle_touch, "(Landroid/view/MotionEvent;)V"),
+        jni_method!(handleTouch, handle_touch, "(IIFFF)V"),
         jni_method!(sendKeycode, send_key_code, "(I)V"),
     ];
 
