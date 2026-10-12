@@ -48,6 +48,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.twoyi.utils.AppKV;
+import io.twoyi.utils.BootTrace;
 import io.twoyi.utils.NavUtils;
 import io.twoyi.utils.RomManager;
 
@@ -62,6 +63,9 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
     /** Container boot window; rendering appears only after BOOT_COMPLETED. */
     private static final int BOOT_TIMEOUT_SECONDS = 120;
 
+    private final java.util.concurrent.atomic.AtomicBoolean mSurfaceCreated = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final java.util.concurrent.atomic.AtomicBoolean mInitCalled = new java.util.concurrent.atomic.AtomicBoolean(false);
+
     private SurfaceView mSurfaceView;
 
     private ViewGroup mRootView;
@@ -75,6 +79,8 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
     private final SurfaceHolder.Callback mSurfaceCallback = new SurfaceHolder.Callback() {
         @Override
         public void surfaceCreated(@NonNull SurfaceHolder holder) {
+            BootTrace.i(TAG, "surfaceCreated");
+            mSurfaceCreated.set(true);
             Surface surface = holder.getSurface();
             WindowManager windowManager = getWindowManager();
             Display defaultDisplay = windowManager.getDefaultDisplay();
@@ -84,6 +90,8 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
             float xdpi = displayMetrics.xdpi;
             float ydpi = displayMetrics.ydpi;
 
+            BootTrace.i(TAG, "Renderer.init surface=" + surface.isValid() + " loader=" + RomManager.getLoaderPath(getApplicationContext()));
+            mInitCalled.set(true);
             Renderer.init(surface, RomManager.getLoaderPath(getApplicationContext()), xdpi, ydpi, (int) getBestFps());
 
             Log.i(TAG, "surfaceCreated");
@@ -91,6 +99,7 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
 
         @Override
         public void surfaceChanged(@NonNull SurfaceHolder holder, int format, int width, int height) {
+            BootTrace.i(TAG, "surfaceChanged " + width + "x" + height);
             Surface surface = holder.getSurface();
             Renderer.resetWindow(surface, 0, 0, mSurfaceView.getWidth(), mSurfaceView.getHeight());
             Log.i(TAG, "surfaceChanged: " + mSurfaceView.getWidth() + "x" + mSurfaceView.getHeight());
@@ -98,6 +107,7 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
 
         @Override
         public void surfaceDestroyed(@NonNull SurfaceHolder holder) {
+            BootTrace.w(TAG, "surfaceDestroyed");
             Renderer.removeWindow(holder.getSurface());
             Log.i(TAG, "surfaceDestroyed!");
         }
@@ -106,6 +116,7 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         boolean started = TwoyiStatusManager.getInstance().isStarted();
+        BootTrace.i(TAG, "onCreate savedInstanceState=" + savedInstanceState + " isStarted=" + started);
         Log.i(TAG, "onCreate: " + savedInstanceState + " isStarted: " + started);
 
         if (started) {
@@ -153,15 +164,19 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
     }
 
     private void bootSystem() {
+        BootTrace.i(TAG, "bootSystem begin");
         boolean romExist = RomManager.romExist(this);
         boolean factoryRomUpdated = RomManager.needsUpgrade(this);
         boolean forceInstall = AppKV.getBooleanConfig(getApplicationContext(), AppKV.FORCE_ROM_BE_RE_INSTALL, false);
         boolean use3rdRom = AppKV.getBooleanConfig(getApplicationContext(), AppKV.SHOULD_USE_THIRD_PARTY_ROM, false);
 
+        BootTrace.i(TAG, "bootSystem romExist=" + romExist + " needsUpgrade=" + factoryRomUpdated
+                + " force=" + forceInstall + " thirdParty=" + use3rdRom);
+
         boolean shouldExtractRom = !romExist || forceInstall || (!use3rdRom && factoryRomUpdated);
 
         if (shouldExtractRom) {
-            Log.i(TAG, "extracting rom...");
+            BootTrace.i(TAG, "extracting rom...");
 
             showTipsForFirstBoot();
 
@@ -173,11 +188,13 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
                 RomManager.initRootfs(getApplicationContext());
 
                 runOnUiThread(() -> {
+                    BootTrace.i(TAG, "rom extracted, attaching SurfaceView");
                     mRootView.addView(mSurfaceView, 0);
                     showBootingProcedure();
                 });
             }, "extract-rom").start();
         } else {
+            BootTrace.i(TAG, "rom present, attaching SurfaceView");
             mRootView.addView(mSurfaceView, 0);
             showBootingProcedure();
         }
@@ -221,6 +238,8 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
                         }
                         final long secs = (SystemClock.elapsedRealtime() - start) / 1000;
                         Log.i(TAG, "waiting boot: " + secs + "s / " + BOOT_TIMEOUT_SECONDS + "s");
+                        BootTrace.i(TAG, "waiting boot " + secs + "s, surfaceCreated=" + mSurfaceCreated.get()
+                                + " initCalled=" + mInitCalled.get());
                         runOnUiThread(() -> mLoadingText.setText(getString(R.string.booting_tips) + " " + secs + "s / " + BOOT_TIMEOUT_SECONDS + "s"));
                     }
                 } catch (Throwable ignored) {
@@ -236,8 +255,12 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
                 }
 
                 Log.e(TAG, "boot give up after " + ((SystemClock.elapsedRealtime() - start) / 1000) + "s (limit " + BOOT_TIMEOUT_SECONDS + "s); exporting logs");
+                TwoyiStatusManager.getInstance().onWaitBootFailed((SystemClock.elapsedRealtime() - start) / 1000);
+                BootTrace.e(TAG, "boot give up; surfaceCreated=" + mSurfaceCreated.get()
+                        + " initCalled=" + mInitCalled.get());
                 exportRomLog();
                 exportHostLog();
+                exportTraceLogs();
 
                 runOnUiThread(() -> Toast.makeText(getApplicationContext(), R.string.boot_failed, Toast.LENGTH_LONG).show());
 
@@ -292,8 +315,7 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
      * Dump the host logcat into the same Download/logs directory. Needs no
      * root; runs the same dump path as {@code adb logcat -d}.
      */
-    private void exportHostLog() {
-        try {
+    private void exportHostLog() {        try {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
                 return;
             }
@@ -322,6 +344,52 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
             Log.i(TAG, "host logcat exported to " + uri);
         } catch (Throwable t) {
             Log.w(TAG, "export host logcat failed", t);
+        }
+    }
+
+    /** Copy the persistent boot trace + native trace into Download/logs too. */
+    private void exportTraceLogs() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return;
+        }
+        try {
+            java.io.File trace = io.twoyi.utils.BootTrace.file();
+            if (trace != null && trace.length() > 0) {
+                Uri uri = createDownloadFile("twoyi-boot-trace-");
+                if (uri != null) {
+                    copyFile(trace, uri);
+                    BootTrace.i(TAG, "boot trace exported to " + uri);
+                }
+            }
+            java.io.File nativeTrace = new java.io.File(getDataDir(), "native-trace.txt");
+            if (nativeTrace.exists() && nativeTrace.length() > 0) {
+                Uri uri = createDownloadFile("twoyi-native-trace-");
+                if (uri != null) {
+                    copyFile(nativeTrace, uri);
+                    BootTrace.i(TAG, "native trace exported to " + uri);
+                }
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "export trace logs failed", t);
+        }
+    }
+
+    private Uri createDownloadFile(String namePrefix) {
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, namePrefix + System.currentTimeMillis() + ".txt");
+        values.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain");
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/logs");
+        return getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+    }
+
+    private void copyFile(java.io.File src, Uri dst) throws java.io.IOException {
+        try (java.io.OutputStream os = getContentResolver().openOutputStream(dst);
+             java.io.InputStream is = new java.io.FileInputStream(src)) {
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = is.read(buffer)) > 0) {
+                os.write(buffer, 0, count);
+            }
         }
     }
 

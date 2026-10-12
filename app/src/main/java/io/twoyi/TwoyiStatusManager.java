@@ -63,6 +63,10 @@ public class TwoyiStatusManager {
         return mBootLatch.await(timeout, unit);
     }
 
+    public void onWaitBootFailed(long waitedSeconds) {
+        io.twoyi.utils.BootTrace.w("TwoyiStatusManager", "waitBoot gave up after " + waitedSeconds + "s");
+    }
+
     public void switchOs(Context context) {
         if (!mStarted.get()) {
             return;

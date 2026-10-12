@@ -36,6 +36,24 @@ macro_rules! jni_method {
 
 static RENDERER_STARTED: AtomicBool = AtomicBool::new(false);
 
+/// Persistent, lossless trace for the native boot gates. The logcat ring
+/// buffer evicts these lines within minutes on busy devices, so mirror them
+/// to a file the app exports on boot failure.
+fn native_trace(msg: &str) {
+    use std::io::Write as _;
+    let path = "/data/data/io.twoyi/native-trace.txt";
+    match std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        Ok(mut f) => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let _ = writeln!(f, "{} {} {}", now, std::process::id(), msg);
+        }
+        Err(e) => error!("native_trace: open {} failed: {:?}", path, e),
+    }
+}
+
 #[no_mangle]
 pub fn renderer_init(
     env: JNIEnv,
@@ -66,9 +84,14 @@ pub fn renderer_init(
         "renderer_init width: {}, height: {}, fps: {}",
         width, height, fps
     );
+    native_trace(&format!(
+        "renderer_init enter w={} h={} fps={}",
+        width, height, fps
+    ));
 
-    if RENDERER_STARTED.compare_exchange(false, true, 
+    if RENDERER_STARTED.compare_exchange(false, true,
         Ordering::Acquire, Ordering::Relaxed).is_err() {
+        native_trace("renderer_init: already started, re-attach window");
         let win = window.ptr().as_ptr() as *mut c_void;
         unsafe {
             renderer_bindings::setNativeWindow(win);
@@ -114,6 +137,10 @@ pub fn renderer_init(
             "renderer_init: spawning ./init in {} with TYLOADER={}, log={}",
             working_dir, loader_path, log_path
         );
+        native_trace(&format!(
+            "spawning ./init in {} TYLOADER={} log={}",
+            working_dir, loader_path, log_path
+        ));
         match Command::new("./init")
             .current_dir(working_dir)
             .env("TYLOADER", &loader_path)
@@ -121,8 +148,14 @@ pub fn renderer_init(
             .stderr(Stdio::from(errors))
             .spawn()
         {
-            Ok(child) => info!("renderer_init: ./init spawned, pid={}", child.id()),
-            Err(e) => error!("renderer_init: spawn ./init failed: {:?}", e),
+            Ok(child) => {
+                info!("renderer_init: ./init spawned, pid={}", child.id());
+                native_trace(&format!("./init spawned pid={}", child.id()));
+            }
+            Err(e) => {
+                error!("renderer_init: spawn ./init failed: {:?}", e);
+                native_trace(&format!("spawn ./init FAILED: {:?}", e));
+            }
         }
     }
 }

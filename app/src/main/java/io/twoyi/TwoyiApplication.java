@@ -24,6 +24,7 @@ import android.content.res.Resources;
 
 import java.lang.reflect.Field;
 
+import io.twoyi.utils.BootTrace;
 import io.twoyi.utils.RomManager;
 
 /**
@@ -37,9 +38,18 @@ public class TwoyiApplication extends Application {
     protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
 
-        RomManager.ensureBootFiles(base);
+        BootTrace.init(base);
+        BootTrace.i("TwoyiApplication", "attachBaseContext");
+
+        try {
+            RomManager.ensureBootFiles(base);
+            BootTrace.i("TwoyiApplication", "ensureBootFiles done");
+        } catch (Throwable t) {
+            BootTrace.e("TwoyiApplication", "ensureBootFiles failed", t);
+        }
 
         TwoyiSocketServer.getInstance(base).start();
+        BootTrace.i("TwoyiApplication", "socket server started");
     }
 
     static int statusBarHeight = -1;

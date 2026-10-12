@@ -31,6 +31,8 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import io.twoyi.utils.BootTrace;
+
 public class TwoyiMessenger {
     public static final String TAG = "TwoyiMessenger";
 
@@ -109,7 +111,9 @@ public class TwoyiMessenger {
             this.mWriter.write(msg);
             this.mWriter.flush();
             Log.i(TAG, "message sent: " + msg);
+            BootTrace.i(TAG, "message sent: " + msg);
         } catch (Throwable t) {
+            BootTrace.e(TAG, "write message failed: " + msg, t);
             Log.w(TAG, "write message failed: " + msg, t);
         } finally {
             this.mLock.writeLock().unlock();

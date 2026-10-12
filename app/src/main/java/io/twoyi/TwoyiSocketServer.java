@@ -33,6 +33,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.twoyi.ui.SettingsActivity;
+import io.twoyi.utils.BootTrace;
 import io.twoyi.utils.IOUtils;
 import io.twoyi.utils.UIHelper;
 
@@ -73,6 +74,7 @@ public class TwoyiSocketServer {
 
     public void start() {
         if (mStarted.compareAndSet(false, true)) {
+            BootTrace.i(TAG, "socket server starting, name=" + SOCK_NAME);
             EXECUTOR.submit(this::start0);
 
             EXECUTOR.submit(()-> {
@@ -92,6 +94,7 @@ public class TwoyiSocketServer {
             socket = new LocalSocket(LocalSocket.SOCKET_SEQPACKET);
             socket.bind(new LocalSocketAddress(SOCK_NAME, LocalSocketAddress.Namespace.ABSTRACT));
             LocalServerSocket localServerSocket = new LocalServerSocket(socket.getFileDescriptor());
+            BootTrace.i(TAG, "TWOYI_SOCK bound (abstract namespace)");
 
             Thread currentThread = Thread.currentThread();
             while (!currentThread.isInterrupted()) {
