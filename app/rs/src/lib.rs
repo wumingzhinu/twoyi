@@ -39,8 +39,7 @@ static RENDERER_STARTED: AtomicBool = AtomicBool::new(false);
 /// Persistent, lossless trace for the native boot gates. The logcat ring
 /// buffer evicts these lines within minutes on busy devices, so mirror them
 /// to a file the app exports on boot failure.
-fn native_trace(msg: &str) {
-    use std::io::Write as _;
+fn native_trace(msg: &str) {    use std::io::Write as _;
     let path = "/data/data/io.twoyi/native-trace.txt";
     match std::fs::OpenOptions::new().create(true).append(true).open(path) {
         Ok(mut f) => {
@@ -51,6 +50,31 @@ fn native_trace(msg: &str) {
             let _ = writeln!(f, "{} {} {}", now, std::process::id(), msg);
         }
         Err(e) => error!("native_trace: open {} failed: {:?}", path, e),
+    }
+}
+
+/// Log the SELinux xattr label of a path, when readable.
+fn trace_selinux_label(path: &str) {
+    if let Ok(p) = std::ffi::CString::new(path) {
+        let mut buf = [0u8; 128];
+        let n = unsafe {
+            libc::getxattr(
+                p.as_ptr(),
+                b"security.selinux\0".as_ptr() as *const libc::c_char,
+                buf.as_mut_ptr() as *mut libc::c_void,
+                buf.len(),
+            )
+        };
+        if n < 0 {
+            native_trace(&format!(
+                "xattr {}: errno={:?}",
+                path,
+                std::io::Error::last_os_error().raw_os_error()
+            ));
+        } else {
+            let label = String::from_utf8_lossy(&buf[..n as usize]);
+            native_trace(&format!("xattr {}: {}", path, label.trim_end_matches('\0')));
+        }
     }
 }
 
@@ -160,6 +184,32 @@ pub fn renderer_init(
         let enforce = std::fs::read_to_string("/sys/fs/selinux/enforce")
             .unwrap_or_else(|_| "unknown".into());
         native_trace(&format!("selinux enforce={}", enforce.trim()));
+        if let Ok(ctx) = std::fs::read_to_string("/proc/self/attr/current") {
+            native_trace(&format!("selinux context={}", ctx.trim()));
+        }
+        trace_selinux_label(init_path);
+
+        // Recreate the file through this process. An extraction-created file
+        // can carry a stale SELinux label (e.g. left from a previous install
+        // or restorecon) that denies execve even though DAC allows it; a file
+        // written by this process inherits the parent dir's current context.
+        let fresh_path = "/data/data/io.twoyi/rootfs/init.fresh";
+        match std::fs::copy(init_path, fresh_path) {
+            Ok(_) => {
+                let _ = std::fs::set_permissions(
+                    fresh_path,
+                    std::fs::Permissions::from_mode(0o700),
+                );
+                match std::fs::rename(fresh_path, init_path) {
+                    Ok(_) => {
+                        native_trace("init refreshed via copy+rename");
+                        trace_selinux_label(init_path);
+                    }
+                    Err(e) => native_trace(&format!("rename init.fresh FAILED: {:?}", e)),
+                }
+            }
+            Err(e) => native_trace(&format!("copy init FAILED: {:?}", e)),
+        }
 
         let outputs = match File::create(log_path) {
             Ok(f) => f,
