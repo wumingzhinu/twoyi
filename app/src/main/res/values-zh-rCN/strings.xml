@@ -73,4 +73,5 @@
     <string name="settings_key_shutdown">关机</string>
     <string name="settings_key_reboot">重启</string>
     <string name="replace_rom_unofficial_tips">抱歉，请修改 ROM 描述信息，并且尽量不要使用官方作者的名字 :)</string>
+    <string name="booting_tips">启动中</string>
 </resources>
