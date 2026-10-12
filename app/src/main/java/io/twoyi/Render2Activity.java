@@ -18,8 +18,13 @@
 
 package io.twoyi;
 
+import android.content.ContentValues;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.SystemClock;
+import android.provider.MediaStore;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
@@ -53,6 +58,9 @@ import io.twoyi.utils.RomManager;
 public class Render2Activity extends AppCompatActivity implements View.OnTouchListener {
 
     private static final String TAG = "Render2Activity";
+
+    /** Container boot window; rendering appears only after BOOT_COMPLETED. */
+    private static final int BOOT_TIMEOUT_SECONDS = 120;
 
     private SurfaceView mSurfaceView;
 
@@ -198,34 +206,85 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
 
     private void showBootingProcedure() {
         // mLoadingText.setText(R.string.booting_tips);
-        mLoadingText.setVisibility(View.GONE);
+        mLoadingText.setVisibility(View.VISIBLE);
         mBootLogView.setVisibility(View.VISIBLE);
+        final long start = SystemClock.elapsedRealtime();
         new Thread(() -> {
 
             if (true) {
                 boolean success = false;
                 try {
-                    success = TwoyiStatusManager.getInstance().waitBoot(15, TimeUnit.SECONDS);
+                    while (SystemClock.elapsedRealtime() - start < BOOT_TIMEOUT_SECONDS * 1000L) {
+                        success = TwoyiStatusManager.getInstance().waitBoot(5, TimeUnit.SECONDS);
+                        if (success) {
+                            break;
+                        }
+                        final long secs = (SystemClock.elapsedRealtime() - start) / 1000;
+                        Log.i(TAG, "waiting boot: " + secs + "s / " + BOOT_TIMEOUT_SECONDS + "s");
+                        runOnUiThread(() -> mLoadingText.setText(getString(R.string.booting_tips) + " " + secs + "s / " + BOOT_TIMEOUT_SECONDS + "s"));
+                    }
                 } catch (Throwable ignored) {
                 }
 
-                if (!success) {
-                    runOnUiThread(() -> Toast.makeText(getApplicationContext(), R.string.boot_failed, Toast.LENGTH_SHORT).show());
-
-                    // waiting for track
-                    SystemClock.sleep(3000);
-
-                    finish();
-                    System.exit(0);
+                if (success) {
+                    Log.i(TAG, "boot completed in " + (SystemClock.elapsedRealtime() - start) + "ms");
+                    runOnUiThread(() -> {
+                        mLoadingView.stopAnimation();
+                        mLoadingLayout.setVisibility(View.GONE);
+                    });
                     return;
                 }
-            }
 
-            runOnUiThread(() -> {
-                mLoadingView.stopAnimation();
-                mLoadingLayout.setVisibility(View.GONE);
-            });
+                Log.e(TAG, "boot timeout after " + BOOT_TIMEOUT_SECONDS + "s; exporting container log");
+                exportRomLog();
+
+                runOnUiThread(() -> Toast.makeText(getApplicationContext(), R.string.boot_failed, Toast.LENGTH_LONG).show());
+
+                // keep the boot log on screen so the hang point can be read
+                SystemClock.sleep(30 * 1000);
+
+                finish();
+                System.exit(0);
+                return;
+            }
         }, "waiting-boot").start();
+    }
+
+    /**
+     * Copy the container's stdout/stderr ({@code /data/data/io.twoyi/log.txt})
+     * into Downloads so a failed boot can be inspected afterwards.
+     */
+    private void exportRomLog() {
+        try {
+            java.io.File log = new java.io.File(getDataDir(), "log.txt");
+            if (!log.exists() || log.length() == 0) {
+                Log.w(TAG, "no container log at " + log.getAbsolutePath());
+                return;
+            }
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                Log.w(TAG, "pre-Q shared storage not supported for log export");
+                return;
+            }
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, "twoyi-log-" + System.currentTimeMillis() + ".txt");
+            values.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain");
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+            Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) {
+                return;
+            }
+            try (java.io.OutputStream os = getContentResolver().openOutputStream(uri);
+                 java.io.InputStream is = new java.io.FileInputStream(log)) {
+                byte[] buffer = new byte[8192];
+                int count;
+                while ((count = is.read(buffer)) > 0) {
+                    os.write(buffer, 0, count);
+                }
+            }
+            Log.i(TAG, "container log exported to Download: " + uri);
+        } catch (Throwable t) {
+            Log.w(TAG, "export container log failed", t);
+        }
     }
 
     @Override

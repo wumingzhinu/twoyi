@@ -38,6 +38,8 @@ import androidx.annotation.Nullable;
 import com.topjohnwu.superuser.CallbackList;
 import com.topjohnwu.superuser.Shell;
 
+import java.io.File;
+import java.io.RandomAccessFile;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -156,7 +158,10 @@ public class BootLogTexture extends TextureView implements TextureView.SurfaceTe
             };
 
             Shell shell = ShellUtil.newSh();
-            shell.newJob().add("timeout -s 9 30 logcat -v brief *I").to(callbackList).submit();
+            // 5 minutes instead of 30s: the boot window is now much longer.
+            shell.newJob().add("timeout -s 9 300 logcat -v brief *I").to(callbackList).submit();
+
+            startRomLogTail();
 
             while (mRendering.get()) {
                 render();
@@ -169,6 +174,51 @@ public class BootLogTexture extends TextureView implements TextureView.SurfaceTe
             }
 
         });
+    }
+
+    /**
+     * Tail the container's own stdout/stderr (/data/data/io.twoyi/log.txt,
+     * written by the native side when it spawns rootfs/init) so that hangs
+     * inside the ROM boot are visible on screen.
+     */
+    private void startRomLogTail() {
+        new Thread(() -> {
+            File logFile = new File(getContext().getDataDir(), "log.txt");
+            long pos = 0;
+            while (mRendering.get()) {
+                try {
+                    if (logFile.exists()) {
+                        long len = logFile.length();
+                        if (len < pos) {
+                            pos = 0; // file was recreated (new boot)
+                        }
+                        if (len > pos) {
+                            try (RandomAccessFile raf = new RandomAccessFile(logFile, "r")) {
+                                raf.seek(pos);
+                                String line;
+                                boolean added = false;
+                                while ((line = raf.readLine()) != null) {
+                                    synchronized (mLogMessages) {
+                                        mLogMessages.add("[ROM] " + line);
+                                    }
+                                    added = true;
+                                }
+                                pos = raf.getFilePointer();
+                                if (added) {
+                                    synchronized (mLogMessages) {
+                                        // keep the trailing marker visible
+                                        mLogMessages.add("[ROM] ...");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Thread.sleep(200);
+                } catch (Throwable t) {
+                    break;
+                }
+            }
+        }, "rom-log-tail").start();
     }
 
     @Override

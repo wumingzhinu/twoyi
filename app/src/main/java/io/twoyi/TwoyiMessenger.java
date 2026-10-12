@@ -21,6 +21,7 @@ package io.twoyi;
 import android.net.LocalSocket;
 import android.net.LocalSocketAddress;
 import android.os.Looper;
+import android.util.Log;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -62,7 +63,9 @@ public class TwoyiMessenger {
             InputStream is = this.socket.getInputStream();
             OutputStream os = this.socket.getOutputStream();
             this.mWriter = new OutputStreamWriter(os);
+            Log.i(TAG, "connected to " + SOCK_NAME);
         } catch (IOException e) {
+            Log.w(TAG, "connect to " + SOCK_NAME + " failed", e);
             e.printStackTrace();
         }
         return this;
@@ -99,9 +102,15 @@ public class TwoyiMessenger {
 
         try {
             this.mLock.writeLock().lock();
+            if (this.mWriter == null) {
+                Log.w(TAG, "writer null, dropping message: " + msg);
+                return;
+            }
             this.mWriter.write(msg);
             this.mWriter.flush();
-        } catch (Throwable ignored) {
+            Log.i(TAG, "message sent: " + msg);
+        } catch (Throwable t) {
+            Log.w(TAG, "write message failed: " + msg, t);
         } finally {
             this.mLock.writeLock().unlock();
         }

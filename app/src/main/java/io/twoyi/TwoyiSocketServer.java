@@ -114,6 +114,7 @@ public class TwoyiSocketServer {
     }
 
     private void handleSocket(LocalSocket socket) {
+        Log.i(TAG, "container connected: " + socket);
         EXECUTOR.submit(() -> handleSocket0(socket));
     }
 
@@ -125,14 +126,20 @@ public class TwoyiSocketServer {
             while (!currentThread.isInterrupted()) {
                 byte[] data = new byte[1024];
                 int read = inputStream.read(data);
+                if (read <= 0) {
+                    Log.i(TAG, "container socket closed read=" + read);
+                    break;
+                }
                 handleData(new String(data, 0, read, StandardCharsets.US_ASCII));
             }
 
-        } catch (IOException ignored) {
+        } catch (IOException e) {
+            Log.w(TAG, "container socket io error", e);
         }
     }
 
     private void handleData(String msg) {
+        Log.i(TAG, "socket message: " + msg);
         if (msg.startsWith(SWITCH_HOST)) {
             // switch host system
             TwoyiStatusManager.getInstance().switchOs(mContext);

@@ -75,6 +75,7 @@ pub fn renderer_init(
             renderer_bindings::resetSubWindow(win, 0, 0, width, height, width, height, 1.0, 0.0);
         }
     } else {
+        info!("renderer_init: starting input system, screen {}x{}", width, height);
         input::start_input_system(width, height);
 
         thread::spawn(move || {
@@ -92,17 +93,37 @@ pub fn renderer_init(
             }
         });
 
-        let loader_path: String = env.get_string(loader.into()).unwrap().into();
+        let loader_path: String = match env.get_string(loader.into()) {
+            Ok(s) => s.into(),
+            Err(e) => {
+                error!("renderer_init: get loader path failed: {:?}", e);
+                return;
+            }
+        };
         let working_dir = "/data/data/io.twoyi/rootfs";
         let log_path = "/data/data/io.twoyi/log.txt";
-        let outputs = File::create(log_path).unwrap();
+        let outputs = match File::create(log_path) {
+            Ok(f) => f,
+            Err(e) => {
+                error!("renderer_init: create {} failed: {:?}", log_path, e);
+                return;
+            }
+        };
         let errors = outputs.try_clone().unwrap();
-        let _ = Command::new("./init")
+        info!(
+            "renderer_init: spawning ./init in {} with TYLOADER={}, log={}",
+            working_dir, loader_path, log_path
+        );
+        match Command::new("./init")
             .current_dir(working_dir)
-            .env("TYLOADER", loader_path)
+            .env("TYLOADER", &loader_path)
             .stdout(Stdio::from(outputs))
             .stderr(Stdio::from(errors))
-            .spawn();
+            .spawn()
+        {
+            Ok(child) => info!("renderer_init: ./init spawned, pid={}", child.id()),
+            Err(e) => error!("renderer_init: spawn ./init failed: {:?}", e),
+        }
     }
 }
 

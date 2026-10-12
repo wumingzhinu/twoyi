@@ -14,6 +14,7 @@ package io.twoyi;
 
 import android.content.Context;
 import android.content.Intent;
+import android.util.Log;
 
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
@@ -27,6 +28,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 
 public class TwoyiStatusManager {
+
+    private static final String TAG = "TwoyiStatusManager";
 
     private static final TwoyiStatusManager INSTANCE = new TwoyiStatusManager();
     private TwoyiStatusManager() {
@@ -47,6 +50,7 @@ public class TwoyiStatusManager {
 
     public void markStarted() {
         if (mStarted.compareAndSet(false, true)) {
+            Log.i(TAG, "BOOT_COMPLETED received, releasing boot barrier");
             try {
                 mBootLatch.await();
             } catch (BrokenBarrierException | InterruptedException ignored) {}
