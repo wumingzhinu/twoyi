@@ -47,21 +47,21 @@ jobs:
           curl -fsSL --retry 3 -o "$HOME/p37.zip" \
             https://dl.google.com/android/repository/platform-37.2_r01.zip
           rm -rf "$SDK/platforms/android-37"
-          unzip -q "$HOME/p37.zip" -d "$SDK/platforms"
+          unzip -q -o "$HOME/p37.zip" -d "$SDK/platforms"
           mv "$SDK/platforms/android-37.2" "$SDK/platforms/android-37"
 
           # build-tools 37.0.0
           curl -fsSL --retry 3 -o "$HOME/bt37.zip" \
             https://dl.google.com/android/repository/build-tools_r37_linux.zip
           rm -rf "$SDK/build-tools/37.0.0"
-          unzip -q "$HOME/bt37.zip" -d "$SDK/build-tools"
+          unzip -q -o "$HOME/bt37.zip" -d "$SDK/build-tools"
           mv "$SDK/build-tools/android-37.0" "$SDK/build-tools/37.0.0"
 
           # NDK r29 stable (NDK 22 was removed from Google's repository)
           curl -fsSL --retry 3 -o "$HOME/ndk29.zip" \
             https://dl.google.com/android/repository/android-ndk-r29-linux.zip
           rm -rf "$HOME/android-ndk-r29" "$SDK/ndk/$NDK_VERSION"
-          unzip -q "$HOME/ndk29.zip" -d "$HOME"
+          unzip -q -o "$HOME/ndk29.zip" -d "$HOME"
           mv "$HOME/android-ndk-r29" "$SDK/ndk/$NDK_VERSION"
 
           # license acceptance files (AGP refuses unlicensed platforms)
