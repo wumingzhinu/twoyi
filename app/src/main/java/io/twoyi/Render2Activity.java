@@ -237,6 +237,7 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
 
                 Log.e(TAG, "boot timeout after " + BOOT_TIMEOUT_SECONDS + "s; exporting container log");
                 exportRomLog();
+                exportHostLog();
 
                 runOnUiThread(() -> Toast.makeText(getApplicationContext(), R.string.boot_failed, Toast.LENGTH_LONG).show());
 
@@ -252,7 +253,7 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
 
     /**
      * Copy the container's stdout/stderr ({@code /data/data/io.twoyi/log.txt})
-     * into Downloads so a failed boot can be inspected afterwards.
+     * into Download/logs so a failed boot can be inspected afterwards.
      */
     private void exportRomLog() {
         try {
@@ -266,9 +267,9 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
                 return;
             }
             ContentValues values = new ContentValues();
-            values.put(MediaStore.MediaColumns.DISPLAY_NAME, "twoyi-log-" + System.currentTimeMillis() + ".txt");
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, "twoyi-rom-" + System.currentTimeMillis() + ".txt");
             values.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain");
-            values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/logs");
             Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
             if (uri == null) {
                 return;
@@ -281,9 +282,46 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
                     os.write(buffer, 0, count);
                 }
             }
-            Log.i(TAG, "container log exported to Download: " + uri);
+            Log.i(TAG, "container log exported to " + uri);
         } catch (Throwable t) {
             Log.w(TAG, "export container log failed", t);
+        }
+    }
+
+    /**
+     * Dump the host logcat into the same Download/logs directory. Needs no
+     * root; runs the same dump path as {@code adb logcat -d}.
+     */
+    private void exportHostLog() {
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                return;
+            }
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, "twoyi-host-" + System.currentTimeMillis() + ".txt");
+            values.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain");
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/logs");
+            Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) {
+                return;
+            }
+            java.util.List<String> out = new java.util.ArrayList<>();
+            java.util.List<String> err = new java.util.ArrayList<>();
+            io.twoyi.utils.ShellUtil.newSh().newJob().add("logcat -d").to(out, err).exec();
+            try (java.io.OutputStream os = getContentResolver().openOutputStream(uri);
+                 java.io.Writer w = new java.io.OutputStreamWriter(os)) {
+                for (String line : out) {
+                    w.write(line);
+                    w.write('\n');
+                }
+                for (String line : err) {
+                    w.write("[stderr] " + line);
+                    w.write('\n');
+                }
+            }
+            Log.i(TAG, "host logcat exported to " + uri);
+        } catch (Throwable t) {
+            Log.w(TAG, "export host logcat failed", t);
         }
     }
 
