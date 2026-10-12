@@ -27,7 +27,6 @@ android {
             //noinspection ChromeOsAbiSupport
             abiFilters "arm64-v8a"
         }
-        archivesBaseName = "twoyi_${versionName}"
     }
 
     buildTypes {
@@ -47,6 +46,10 @@ android {
         }
     }
     namespace 'io.twoyi'
+}
+
+base {
+    archivesName = "twoyi_${android.defaultConfig.versionName}"
 }
 
 dependencies {
