@@ -34,24 +34,29 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Install Android cmdline-tools (runner image ships no SDK)
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          mkdir -p "$SDK/cmdline-tools"
+          curl -fsSL --retry 3 -o /tmp/cmdtools.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          rm -rf "$SDK/cmdline-tools/latest"
+          unzip -q /tmp/cmdtools.zip -d "$SDK/cmdline-tools"
+          mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --version
+
       - name: Resolve SDK/NDK paths
         id: sdk
         run: |
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           echo "sdk=$SDK" >> "$GITHUB_OUTPUT"
           echo "ndk=$SDK/ndk/$NDK_VERSION" >> "$GITHUB_OUTPUT"
-          SM="$(command -v sdkmanager || true)"
-          if [ -z "$SM" ] && [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
-            SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
-          fi
-          if [ -z "$SM" ] && [ -x "$SDK/cmdline-tools/16.0/bin/sdkmanager" ]; then
-            SM="$SDK/cmdline-tools/16.0/bin/sdkmanager"
-          fi
-          if [ -z "$SM" ]; then
-            echo "::error::sdkmanager not found on runner image"
+          if [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "sdkmanager=$SDK/cmdline-tools/latest/bin/sdkmanager" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::sdkmanager missing after cmdline-tools install"
             exit 1
           fi
-          echo "sdkmanager=$SM" >> "$GITHUB_OUTPUT"
 
       - name: Install SDK components (android-37, build-tools 36, NDK 22)
         run: |
