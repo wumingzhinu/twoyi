@@ -63,6 +63,7 @@ fn trace_state(path: &str, follow: bool) {
     match meta {
         Ok(m) => {
             use std::os::unix::fs::MetadataExt;
+            use std::os::unix::fs::PermissionsExt;
             native_trace(&format!(
                 "state {}: mode={:o} uid={} size={}",
                 path,
