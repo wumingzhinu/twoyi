@@ -4,22 +4,14 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
-/*
- * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at https://mozilla.org/MPL/2.0/.
- */
-
 package io.twoyi;
 
 import android.content.Context;
 import android.content.Intent;
 import android.util.Log;
 
-import java.util.concurrent.BrokenBarrierException;
-import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -38,7 +30,10 @@ public class TwoyiStatusManager {
     private final AtomicBoolean mStarted = new AtomicBoolean(false);
     private final AtomicBoolean mShown = new AtomicBoolean(false);
 
-    private final CyclicBarrier mBootLatch = new CyclicBarrier(2);
+    // A CyclicBarrier cannot be polled: a single timed-out await breaks it for
+    // every later await. A CountDownLatch is one-shot but poll-safe, and
+    // reset() simply installs a fresh latch.
+    private volatile CountDownLatch mBootLatch = new CountDownLatch(1);
 
     public static TwoyiStatusManager getInstance() {
         return INSTANCE;
@@ -50,10 +45,8 @@ public class TwoyiStatusManager {
 
     public void markStarted() {
         if (mStarted.compareAndSet(false, true)) {
-            Log.i(TAG, "BOOT_COMPLETED received, releasing boot barrier");
-            try {
-                mBootLatch.await();
-            } catch (BrokenBarrierException | InterruptedException ignored) {}
+            Log.i(TAG, "BOOT_COMPLETED received, releasing boot latch");
+            mBootLatch.countDown();
         }
     }
 
@@ -63,16 +56,11 @@ public class TwoyiStatusManager {
 
     public void reset() {
         mStarted.set(false);
-        mBootLatch.reset();
+        mBootLatch = new CountDownLatch(1);
     }
 
-    public boolean waitBoot(long timeout, TimeUnit unit) throws InterruptedException, BrokenBarrierException {
-        try {
-            mBootLatch.await(timeout, unit);
-            return true;
-        } catch (TimeoutException e) {
-            return false;
-        }
+    public boolean waitBoot(long timeout, TimeUnit unit) throws InterruptedException {
+        return mBootLatch.await(timeout, unit);
     }
 
     public void switchOs(Context context) {

@@ -235,7 +235,7 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
                     return;
                 }
 
-                Log.e(TAG, "boot timeout after " + BOOT_TIMEOUT_SECONDS + "s; exporting container log");
+                Log.e(TAG, "boot give up after " + ((SystemClock.elapsedRealtime() - start) / 1000) + "s (limit " + BOOT_TIMEOUT_SECONDS + "s); exporting logs");
                 exportRomLog();
                 exportHostLog();
 
