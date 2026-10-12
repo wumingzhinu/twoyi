@@ -25,7 +25,7 @@ jobs:
     env:
       ROOTFS_URL: ${{ inputs.rootfs_url || secrets.ROOTFS_URL }}
       ROM_INI_URL: ${{ inputs.rom_ini_url || secrets.ROM_INI_URL }}
-      NDK_VERSION: 22.1.3931673
+      NDK_VERSION: 29.0.14206865
     steps:
       - uses: actions/checkout@v4
 
@@ -34,50 +34,67 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install Android cmdline-tools (runner image ships no SDK)
-        run: |
-          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-          mkdir -p "$SDK/cmdline-tools"
-          curl -fsSL --retry 3 -o "$HOME/cmdtools.zip" \
-            https://dl.google.com/android/repository/commandlinetools-linux-16111833_latest.zip
-          rm -rf "$SDK/cmdline-tools/latest"
-          unzip -q "$HOME/cmdtools.zip" -d "$SDK/cmdline-tools"
-          mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
-          "$SDK/cmdline-tools/latest/bin/sdkmanager" --version
-
-      - name: Resolve SDK/NDK paths
+      # sdkmanager is deprecated and blind to Android 17 packages; NDK 22 was
+      # removed from the repository. Install exactly the pieces we need as
+      # official zips and lay them out in the standard SDK directory layout.
+      - name: Install SDK pieces (platform android-37, build-tools 37.0.0, NDK 29)
         id: sdk
         run: |
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          mkdir -p "$SDK/platforms" "$SDK/build-tools" "$SDK/licenses"
+
+          # platform android-37 (Android 17; Google ships it as 37.2)
+          curl -fsSL --retry 3 -o "$HOME/p37.zip" \
+            https://dl.google.com/android/repository/platform-37.2_r01.zip
+          rm -rf "$SDK/platforms/android-37"
+          unzip -q "$HOME/p37.zip" -d "$SDK/platforms"
+          mv "$SDK/platforms/android-37.2" "$SDK/platforms/android-37"
+
+          # build-tools 37.0.0
+          curl -fsSL --retry 3 -o "$HOME/bt37.zip" \
+            https://dl.google.com/android/repository/build-tools_r37_linux.zip
+          rm -rf "$SDK/build-tools/37.0.0"
+          unzip -q "$HOME/bt37.zip" -d "$SDK/build-tools"
+          mv "$SDK/build-tools/android-37.0" "$SDK/build-tools/37.0.0"
+
+          # NDK r29 stable (NDK 22 was removed from Google's repository)
+          curl -fsSL --retry 3 -o "$HOME/ndk29.zip" \
+            https://dl.google.com/android/repository/android-ndk-r29-linux.zip
+          rm -rf "$HOME/android-ndk-r29" "$SDK/ndk/$NDK_VERSION"
+          unzip -q "$HOME/ndk29.zip" -d "$HOME"
+          mv "$HOME/android-ndk-r29" "$SDK/ndk/$NDK_VERSION"
+
+          # license acceptance files (AGP refuses unlicensed platforms)
+          printf '%s\n' \
+            8933bad161af4178b1185d1a37fbf41ea5269c55 \
+            d56f5187479451eabf01fb78af6dfcb131a6481e \
+            24333f8a63b6825ea9c5514f83c2829b004d1fee \
+            > "$SDK/licenses/android-sdk-license"
+          printf '%s\n' \
+            84831b9409646a918e30573bab4c9c91346d8abd \
+            > "$SDK/licenses/android-sdk-preview-license"
+
           echo "sdk=$SDK" >> "$GITHUB_OUTPUT"
           echo "ndk=$SDK/ndk/$NDK_VERSION" >> "$GITHUB_OUTPUT"
-          if [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
-            echo "sdkmanager=$SDK/cmdline-tools/latest/bin/sdkmanager" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::sdkmanager missing after cmdline-tools install"
-            exit 1
-          fi
-
-      - name: Install SDK components (android-37, build-tools 36, NDK 22)
-        run: |
-          SM="${{ steps.sdk.outputs.sdkmanager }}"
-          SDK="${{ steps.sdk.outputs.sdk }}"
-          yes | "$SM" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
-          "$SM" --sdk_root="$SDK" "platforms;android-37" "build-tools;36.0.0" "platform-tools" "ndk;$NDK_VERSION"
+          ls "$SDK/platforms" "$SDK/build-tools" "$SDK/ndk"
+          "$SDK/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang" --version | head -1
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build libtwoyi.so (cargo-xdk, arm64-v8a only)
+      - name: Build libtwoyi.so (cargo, arm64-v8a)
         env:
-          ANDROID_NDK_HOME: ${{ steps.sdk.outputs.ndk }}
           ANDROID_NDK_ROOT: ${{ steps.sdk.outputs.ndk }}
-          CARGO_NET_GIT_FETCH_WITH_CLI: "true"
         run: |
+          NDK="$ANDROID_NDK_ROOT"
+          CLANG="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang"
+          test -x "$CLANG" || { echo "::error::clang wrapper missing in NDK"; exit 1; }
           rustup target add aarch64-linux-android
-          cargo install cargo-xdk
           cd app/rs
-          cargo xdk -t arm64-v8a -o ../src/main/jniLibs build --release
-          ls -l ../src/main/jniLibs/arm64-v8a/
+          mkdir -p .cargo
+          printf '[target.aarch64-linux-android]\nlinker = "%s"\n' "$CLANG" > .cargo/config.toml
+          CARGO_NET_GIT_FETCH_WITH_CLI=true cargo build --release --target aarch64-linux-android
+          cp -f target/aarch64-linux-android/release/libtwoyi.so ../src/main/jniLibs/arm64-v8a/
+          ls -l ../src/main/jniLibs/arm64-v8a/libtwoyi.so
 
       - name: Inject container ROM (optional)
         run: |
@@ -94,6 +111,8 @@ jobs:
           fi
 
       - name: Gradle build (assembleRelease)
+        env:
+          ANDROID_HOME: ${{ steps.sdk.outputs.sdk }}
         run: |
           chmod +x ./gradlew
           ./gradlew --no-daemon assembleRelease
