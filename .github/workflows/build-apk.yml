@@ -34,20 +34,30 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Resolve SDK/NDK paths
         id: sdk
         run: |
-          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/android-sdk}}"
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           echo "sdk=$SDK" >> "$GITHUB_OUTPUT"
           echo "ndk=$SDK/ndk/$NDK_VERSION" >> "$GITHUB_OUTPUT"
+          SM="$(command -v sdkmanager || true)"
+          if [ -z "$SM" ] && [ -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          if [ -z "$SM" ] && [ -x "$SDK/cmdline-tools/16.0/bin/sdkmanager" ]; then
+            SM="$SDK/cmdline-tools/16.0/bin/sdkmanager"
+          fi
+          if [ -z "$SM" ]; then
+            echo "::error::sdkmanager not found on runner image"
+            exit 1
+          fi
+          echo "sdkmanager=$SM" >> "$GITHUB_OUTPUT"
 
       - name: Install SDK components (android-37, build-tools 36, NDK 22)
         run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platforms;android-37" "build-tools;36.0.0" "platform-tools" "ndk;$NDK_VERSION"
+          SM="${{ steps.sdk.outputs.sdkmanager }}"
+          yes | "$SM" --licenses >/dev/null 2>&1 || true
+          "$SM" "platforms;android-37" "build-tools;36.0.0" "platform-tools" "ndk;$NDK_VERSION"
 
       - uses: dtolnay/rust-toolchain@stable
 
