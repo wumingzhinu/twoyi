@@ -53,9 +53,35 @@ fn native_trace(msg: &str) {    use std::io::Write as _;
     }
 }
 
+/// Trace existence/metadata of a path; follows symlinks when requested.
+fn trace_state(path: &str, follow: bool) {
+    let meta = if follow {
+        std::fs::metadata(path)
+    } else {
+        std::fs::symlink_metadata(path)
+    };
+    match meta {
+        Ok(m) => {
+            use std::os::unix::fs::MetadataExt;
+            native_trace(&format!(
+                "state {}: mode={:o} uid={} size={}",
+                path,
+                m.permissions().mode(),
+                m.uid(),
+                m.len()
+            ));
+        }
+        Err(e) => native_trace(&format!("state {}: ERR {:?}", path, e.kind())),
+    }
+    if follow {
+        if let Ok(target) = std::fs::read_link(path) {
+            native_trace(&format!("readlink {} -> {:?}", path, target));
+        }
+    }
+}
+
 /// Log the SELinux xattr label of a path, when readable.
-fn trace_selinux_label(path: &str) {
-    if let Ok(p) = std::ffi::CString::new(path) {
+fn trace_selinux_label(path: &str) {    if let Ok(p) = std::ffi::CString::new(path) {
         let mut buf = [0u8; 128];
         let n = unsafe {
             libc::getxattr(
@@ -220,24 +246,41 @@ pub fn renderer_init(
             }
         };
         let errors = outputs.try_clone().unwrap();
+        let info_loader = "/data/data/io.twoyi/loader64";
         info!(
             "renderer_init: spawning ./init in {} with TYLOADER={}, log={}",
-            working_dir, loader_path, log_path
+            working_dir, info_loader, log_path
         );
         native_trace(&format!(
-            "spawning ./init in {} TYLOADER={} log={}",
-            working_dir, loader_path, log_path
+            "spawning ./init in {} TYLOADER={} log={} cwd={:?}",
+            working_dir, info_loader, log_path, std::env::current_dir()
         ));
+        // pre-spawn fs state: is the ROM loader64 symlink resolvable, is init intact?
+        trace_state(info_loader, true);
+        trace_state(init_path, false);
+
         match Command::new("./init")
             .current_dir(working_dir)
-            .env("TYLOADER", &loader_path)
+            .env("TYLOADER", info_loader)
             .stdout(Stdio::from(outputs))
             .stderr(Stdio::from(errors))
             .spawn()
         {
             Ok(child) => {
-                info!("renderer_init: ./init spawned, pid={}", child.id());
-                native_trace(&format!("./init spawned pid={}", child.id()));
+                let id = child.id();
+                info!("renderer_init: ./init spawned, pid={}", id);
+                native_trace(&format!("./init spawned pid={}", id));
+                // Watch for 5s: if the container init dies immediately (its panic
+                // path umounts host storage!) record the exit status and whether
+                // init deleted itself - decisive evidence for the execv failure.
+                let init_owned = init_path.to_string();
+                let mut child = child;
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    let status = child.try_wait();
+                    native_trace(&format!("child status after 5s: {:?}", status));
+                    trace_state(&init_owned, false);
+                });
             }
             Err(e) => {
                 error!("renderer_init: spawn ./init failed: {:?}", e);
