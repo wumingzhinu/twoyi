@@ -20,10 +20,13 @@ android {
         //noinspection ExpiredTargetSdkVersion
         // twoyi's container bootstrap execs rootfs/init from the app-private
         // data dir, which stock SELinux only permits for the legacy
-        // untrusted_app_27 partition. targetSdk 37 puts the process in the
-        // base untrusted_app domain and execve fails with EACCES.
-        // Keeping 27 lets the same APK boot the container on Android 8.1..17.
-        targetSdkVersion 27
+        // untrusted_app_27 seapp partition. That partition spans
+        // targetSdk 26..28; anything >= 29 moves the process to a stricter
+        // domain and execve fails with EACCES, killing the container.
+        // 28 is the highest value that keeps the container bootable on
+        // modern hosts while dodging older OEM "built for old Android"
+        // nag dialogs.
+        targetSdkVersion 28
         versionCode 10354
         versionName "0.5.4-${buildSerial}"
 
