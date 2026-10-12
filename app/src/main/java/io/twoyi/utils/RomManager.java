@@ -146,6 +146,32 @@ public final class RomManager {
         return initFile.exists();
     }
 
+    /**
+     * romExist() only checks rootfs/init, which survives half-finished
+     * extractions (e.g. system/vendor were deleted for an upgrade and the
+     * re-extract crashed). A rootfs missing these keys boots no further than
+     * "cannot find /system/bin/app_process64, disabling 'zygote'".
+     */
+    public static boolean isRomComplete(Context context) {
+        String[] keys = {
+                "init",
+                "system/build.prop",
+                "system/bin/app_process64",
+                "system/bin/surfaceflinger",
+                "system/framework/framework.jar",
+                "system/framework/services.jar",
+                "init.rc",
+        };
+        File root = getRootfsDir(context);
+        for (String key : keys) {
+            if (!new File(root, key).exists()) {
+                Log.w(TAG, "rom incomplete, missing: " + key);
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean needsUpgrade(Context context) {
         RomInfo currentRomInfo = getCurrentRomInfo(context);
         Log.i(TAG, "current rom: " + currentRomInfo);
