@@ -38,10 +38,10 @@ jobs:
         run: |
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
           mkdir -p "$SDK/cmdline-tools"
-          curl -fsSL --retry 3 -o /tmp/cmdtools.zip \
-            https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          curl -fsSL --retry 3 -o "$HOME/cmdtools.zip" \
+            https://dl.google.com/android/repository/commandlinetools-linux-16111833_latest.zip
           rm -rf "$SDK/cmdline-tools/latest"
-          unzip -q /tmp/cmdtools.zip -d "$SDK/cmdline-tools"
+          unzip -q "$HOME/cmdtools.zip" -d "$SDK/cmdline-tools"
           mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
           "$SDK/cmdline-tools/latest/bin/sdkmanager" --version
 
@@ -61,8 +61,9 @@ jobs:
       - name: Install SDK components (android-37, build-tools 36, NDK 22)
         run: |
           SM="${{ steps.sdk.outputs.sdkmanager }}"
-          yes | "$SM" --licenses >/dev/null 2>&1 || true
-          "$SM" "platforms;android-37" "build-tools;36.0.0" "platform-tools" "ndk;$NDK_VERSION"
+          SDK="${{ steps.sdk.outputs.sdk }}"
+          yes | "$SM" --sdk_root="$SDK" --licenses >/dev/null 2>&1 || true
+          "$SM" --sdk_root="$SDK" "platforms;android-37" "build-tools;36.0.0" "platform-tools" "ndk;$NDK_VERSION"
 
       - uses: dtolnay/rust-toolchain@stable
 
