@@ -148,7 +148,11 @@ public class BootLogTexture extends TextureView implements TextureView.SurfaceTe
             List<String> callbackList = new CallbackList<String>() {
                 @Override
                 public void onAddElement(String s) {
-                    if (TextUtils.isEmpty(s)) {
+                    // Once the boot log is hidden the render loop is gone, so
+                    // queueing lines only feeds a LinkedList nobody drains -
+                    // thousands of allocations a second for as long as the
+                    // logcat job lives, i.e. steady GC churn right after boot.
+                    if (!mRendering.get() || TextUtils.isEmpty(s)) {
                         return;
                     }
                     synchronized (mLogMessages) {

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Notification small icon for the container foreground service.
+  ~ White-on-transparent: the system renders status bar / shade icons as
+  ~ an alpha mask, so a coloured launcher icon would show up as a blob.
+  -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- A screen inside a screen: the container. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M3,3H21V21H3V3ZM6,6V18H18V6H6Z" />
+</vector>

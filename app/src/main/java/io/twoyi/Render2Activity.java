@@ -258,7 +258,19 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
                     Log.i(TAG, "boot completed in " + (SystemClock.elapsedRealtime() - start) + "ms");
                     runOnUiThread(() -> {
                         mLoadingView.stopAnimation();
+                        // Hide the boot log explicitly: while it is visible it
+                        // redraws the whole log at 60fps and keeps a logcat
+                        // stream pumping into it. Hiding only the parent would
+                        // rely on ancestor-visibility callbacks; changing this
+                        // view's own visibility is what makes its render loop
+                        // exit for sure.
+                        mBootLogView.setVisibility(View.GONE);
                         mLoadingLayout.setVisibility(View.GONE);
+                        // The container is alive now and will keep running while
+                        // the host is used: pin the process so Android's cached
+                        // app freezer cannot SIGSTOP it (that froze the whole
+                        // container in the background).
+                        ContainerService.start(getApplicationContext());
                     });
                     return;
                 }
@@ -445,19 +457,34 @@ public class Render2Activity extends AppCompatActivity implements View.OnTouchLi
         Renderer.sendKeycode(KeyEvent.KEYCODE_HOME);
     }
 
+    /**
+     * Frame rate handed to the container's renderer.
+     *
+     * The renderer throttles itself to this many frames per second, so the
+     * value has to tile the panel's refresh rate. The old hard-coded 45 is a
+     * divisor of 90Hz but not of 60Hz (the common case): on a 60Hz panel each
+     * frame is held for one or two vsyncs in a 2-1-2-1 pattern, which is
+     * visible judder - the container looks laggy even though the host UI is
+     * perfectly smooth.
+     *
+     * Pick the highest preferred rate that divides the refresh rate exactly,
+     * capped at 60 so a 120Hz panel does not double the CPU bill.
+     */
     private float getBestFps() {
-        WindowManager windowManager = getWindowManager();
-        Display defaultDisplay = windowManager.getDefaultDisplay();
-        Display.Mode[] supportedModes = defaultDisplay.getSupportedModes();
-        float fps = 45;
-        for (Display.Mode supportedMode : supportedModes) {
-            float refreshRate = supportedMode.getRefreshRate();
-            if (refreshRate > fps) {
-                // fps = refreshRate;
+        float refreshRate = getWindowManager().getDefaultDisplay().getRefreshRate();
+        int[] candidates = {60, 48, 45, 36, 30, 24};
+        for (int candidate : candidates) {
+            float ratio = refreshRate / candidate;
+            // >= 0.99 so a 59.94Hz panel still lands on 60 rather than 30.
+            if (ratio >= 0.99f && Math.abs(ratio - Math.round(ratio)) < 0.01f) {
+                Log.i(TAG, "refresh rate " + refreshRate + "Hz -> render at " + candidate + "fps");
+                return candidate;
             }
         }
 
-        Log.w(TAG, "current fps: " + fps);
+        // Odd panel (e.g. 165Hz): no exact divisor, use a sane default.
+        float fps = Math.min(refreshRate, 60f);
+        Log.i(TAG, "refresh rate " + refreshRate + "Hz -> render at " + fps + "fps (fallback)");
         return fps;
     }
 }

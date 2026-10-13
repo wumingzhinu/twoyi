@@ -148,145 +148,159 @@ pub fn renderer_init(
             renderer_bindings::setNativeWindow(win);
             renderer_bindings::resetSubWindow(win, 0, 0, width, height, width, height, 1.0, 0.0);
         }
-    } else {
-        info!("renderer_init: starting input system, screen {}x{}", width, height);
-        input::start_input_system(width, height);
+        return;
+    }
 
-        thread::spawn(move || {
-            let win = window.ptr().as_ptr() as *mut c_void;
-            info!("win: {:#?}", win);
-            unsafe {
-                renderer_bindings::startOpenGLRenderer(
-                    win,
-                    width,
-                    height,
-                    xdpi as i32,
-                    ydpi as i32,
-                    fps as i32,
-                );
-            }
-        });
+    info!("renderer_init: starting input system, screen {}x{}", width, height);
+    input::start_input_system(width, height);
 
-        let loader_path: String = match env.get_string(loader.into()) {
-            Ok(s) => s.into(),
-            Err(e) => {
-                error!("renderer_init: get loader path failed: {:?}", e);
-                native_trace(&format!("get loader path FAILED: {:?}", e));
-                return;
-            }
-        };
-        let working_dir = "/data/data/io.twoyi/rootfs";
-        let init_path = "/data/data/io.twoyi/rootfs/init";
-        let log_path = "/data/data/io.twoyi/log.txt";
+    thread::spawn(move || {
+        let win = window.ptr().as_ptr() as *mut c_void;
+        info!("win: {:#?}", win);
+        unsafe {
+            renderer_bindings::startOpenGLRenderer(
+                win,
+                width,
+                height,
+                xdpi as i32,
+                ydpi as i32,
+                fps as i32,
+            );
+        }
+    });
 
-        // The ROM archive stores init with mode 0700; some extraction paths
-        // (AndroidP7zip) drop the exec bit and execve then fails with EACCES.
-        // Force the exec bit before spawning, and record attribution data so a
-        // remaining denial (mode vs SELinux) is decidable from the trace.
-        use std::os::unix::fs::PermissionsExt;
-        match std::fs::metadata(init_path) {
-            Ok(meta) => {
-                let mode = meta.permissions().mode();
-                native_trace(&format!("init mode={:o}", mode));
-                if mode & 0o111 == 0 {
-                    match std::fs::set_permissions(init_path, std::fs::Permissions::from_mode(0o755)) {
-                        Ok(_) => native_trace("chmod init 0755 ok"),
-                        Err(e) => native_trace(&format!("chmod init FAILED: {:?}", e)),
-                    }
+    // The loader argument is a JNI string: read it while we still own the
+    // JNIEnv. The container is launched through the loader64 symlink anyway
+    // (see TYLOADER below), so the value only has to validate here.
+    if let Err(e) = env.get_string(loader.into()) {
+        error!("renderer_init: get loader path failed: {:?}", e);
+        native_trace(&format!("get loader path FAILED: {:?}", e));
+        return;
+    }
+
+    // Container bootstrap does real filesystem work - stat/chmod of init plus
+    // a full copy of the init binary - and used to run synchronously right
+    // here, i.e. on the UI thread inside SurfaceHolder.Callback.surfaceCreated().
+    // That stalled the very first frames after the surface appeared and could
+    // ANR the activity on slow storage. None of it needs the JNIEnv, so hand
+    // it to a worker thread and return to the UI thread immediately.
+    thread::spawn(spawn_container);
+}
+
+/// Verify/repair the container's init binary, wire its stdout to log.txt and
+/// spawn it. Runs on a worker thread (see renderer_init).
+fn spawn_container() {
+    let working_dir = "/data/data/io.twoyi/rootfs";
+    let init_path = "/data/data/io.twoyi/rootfs/init";
+    let log_path = "/data/data/io.twoyi/log.txt";
+
+    // The ROM archive stores init with mode 0700; some extraction paths
+    // (AndroidP7zip) drop the exec bit and execve then fails with EACCES.
+    // Force the exec bit before spawning, and record attribution data so a
+    // remaining denial (mode vs SELinux) is decidable from the trace.
+    use std::os::unix::fs::PermissionsExt;
+    match std::fs::metadata(init_path) {
+        Ok(meta) => {
+            let mode = meta.permissions().mode();
+            native_trace(&format!("init mode={:o}", mode));
+            if mode & 0o111 == 0 {
+                match std::fs::set_permissions(init_path, std::fs::Permissions::from_mode(0o755)) {
+                    Ok(_) => native_trace("chmod init 0755 ok"),
+                    Err(e) => native_trace(&format!("chmod init FAILED: {:?}", e)),
                 }
             }
-            Err(e) => {
-                native_trace(&format!("stat init FAILED: {:?}", e));
-                error!("renderer_init: stat {} failed: {:?}", init_path, e);
-                return;
-            }
         }
-        if let Ok(p) = std::ffi::CString::new(init_path) {
-            if unsafe { libc::access(p.as_ptr(), libc::X_OK) } != 0 {
-                native_trace(&format!("access(X_OK) FAILED errno={:?}", std::io::Error::last_os_error()));
-            } else {
-                native_trace("access(X_OK) ok");
-            }
+        Err(e) => {
+            native_trace(&format!("stat init FAILED: {:?}", e));
+            error!("renderer_init: stat {} failed: {:?}", init_path, e);
+            return;
         }
-        let enforce = std::fs::read_to_string("/sys/fs/selinux/enforce")
-            .unwrap_or_else(|_| "unknown".into());
-        native_trace(&format!("selinux enforce={}", enforce.trim()));
-        if let Ok(ctx) = std::fs::read_to_string("/proc/self/attr/current") {
-            native_trace(&format!("selinux context={}", ctx.trim()));
+    }
+    if let Ok(p) = std::ffi::CString::new(init_path) {
+        if unsafe { libc::access(p.as_ptr(), libc::X_OK) } != 0 {
+            native_trace(&format!("access(X_OK) FAILED errno={:?}", std::io::Error::last_os_error()));
+        } else {
+            native_trace("access(X_OK) ok");
         }
-        trace_selinux_label(init_path);
+    }
+    let enforce = std::fs::read_to_string("/sys/fs/selinux/enforce")
+        .unwrap_or_else(|_| "unknown".into());
+    native_trace(&format!("selinux enforce={}", enforce.trim()));
+    if let Ok(ctx) = std::fs::read_to_string("/proc/self/attr/current") {
+        native_trace(&format!("selinux context={}", ctx.trim()));
+    }
+    trace_selinux_label(init_path);
 
-        // Recreate the file through this process. An extraction-created file
-        // can carry a stale SELinux label (e.g. left from a previous install
-        // or restorecon) that denies execve even though DAC allows it; a file
-        // written by this process inherits the parent dir's current context.
-        let fresh_path = "/data/data/io.twoyi/rootfs/init.fresh";
-        match std::fs::copy(init_path, fresh_path) {
-            Ok(_) => {
-                let _ = std::fs::set_permissions(
-                    fresh_path,
-                    std::fs::Permissions::from_mode(0o700),
-                );
-                match std::fs::rename(fresh_path, init_path) {
-                    Ok(_) => {
-                        native_trace("init refreshed via copy+rename");
-                        trace_selinux_label(init_path);
-                    }
-                    Err(e) => native_trace(&format!("rename init.fresh FAILED: {:?}", e)),
+    // Recreate the file through this process. An extraction-created file
+    // can carry a stale SELinux label (e.g. left from a previous install
+    // or restorecon) that denies execve even though DAC allows it; a file
+    // written by this process inherits the parent dir's current context.
+    let fresh_path = "/data/data/io.twoyi/rootfs/init.fresh";
+    match std::fs::copy(init_path, fresh_path) {
+        Ok(_) => {
+            let _ = std::fs::set_permissions(
+                fresh_path,
+                std::fs::Permissions::from_mode(0o700),
+            );
+            match std::fs::rename(fresh_path, init_path) {
+                Ok(_) => {
+                    native_trace("init refreshed via copy+rename");
+                    trace_selinux_label(init_path);
                 }
+                Err(e) => native_trace(&format!("rename init.fresh FAILED: {:?}", e)),
             }
-            Err(e) => native_trace(&format!("copy init FAILED: {:?}", e)),
         }
+        Err(e) => native_trace(&format!("copy init FAILED: {:?}", e)),
+    }
 
-        let outputs = match File::create(log_path) {
-            Ok(f) => f,
-            Err(e) => {
-                error!("renderer_init: create {} failed: {:?}", log_path, e);
-                native_trace(&format!("create {} FAILED: {:?}", log_path, e));
-                return;
-            }
-        };
-        let errors = outputs.try_clone().unwrap();
-        let info_loader = "/data/data/io.twoyi/loader64";
-        info!(
-            "renderer_init: spawning ./init in {} with TYLOADER={}, log={}",
-            working_dir, info_loader, log_path
-        );
-        native_trace(&format!(
-            "spawning ./init in {} TYLOADER={} log={} cwd={:?}",
-            working_dir, info_loader, log_path, std::env::current_dir()
-        ));
-        // pre-spawn fs state: is the ROM loader64 symlink resolvable, is init intact?
-        trace_state(info_loader, true);
-        trace_state(init_path, false);
+    let outputs = match File::create(log_path) {
+        Ok(f) => f,
+        Err(e) => {
+            error!("renderer_init: create {} failed: {:?}", log_path, e);
+            native_trace(&format!("create {} FAILED: {:?}", log_path, e));
+            return;
+        }
+    };
+    let errors = outputs.try_clone().unwrap();
+    let info_loader = "/data/data/io.twoyi/loader64";
+    info!(
+        "renderer_init: spawning ./init in {} with TYLOADER={}, log={}",
+        working_dir, info_loader, log_path
+    );
+    native_trace(&format!(
+        "spawning ./init in {} TYLOADER={} log={} cwd={:?}",
+        working_dir, info_loader, log_path, std::env::current_dir()
+    ));
+    // pre-spawn fs state: is the ROM loader64 symlink resolvable, is init intact?
+    trace_state(info_loader, true);
+    trace_state(init_path, false);
 
-        match Command::new("./init")
-            .current_dir(working_dir)
-            .env("TYLOADER", info_loader)
-            .stdout(Stdio::from(outputs))
-            .stderr(Stdio::from(errors))
-            .spawn()
-        {
-            Ok(child) => {
-                let id = child.id();
-                info!("renderer_init: ./init spawned, pid={}", id);
-                native_trace(&format!("./init spawned pid={}", id));
-                // Watch for 5s: if the container init dies immediately (its panic
-                // path umounts host storage!) record the exit status and whether
-                // init deleted itself - decisive evidence for the execv failure.
-                let init_owned = init_path.to_string();
-                let mut child = child;
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(5));
-                    let status = child.try_wait();
-                    native_trace(&format!("child status after 5s: {:?}", status));
-                    trace_state(&init_owned, false);
-                });
-            }
-            Err(e) => {
-                error!("renderer_init: spawn ./init failed: {:?}", e);
-                native_trace(&format!("spawn ./init FAILED: {:?}", e));
-            }
+    match Command::new("./init")
+        .current_dir(working_dir)
+        .env("TYLOADER", info_loader)
+        .stdout(Stdio::from(outputs))
+        .stderr(Stdio::from(errors))
+        .spawn()
+    {
+        Ok(child) => {
+            let id = child.id();
+            info!("renderer_init: ./init spawned, pid={}", id);
+            native_trace(&format!("./init spawned pid={}", id));
+            // Watch for 5s: if the container init dies immediately (its panic
+            // path umounts host storage!) record the exit status and whether
+            // init deleted itself - decisive evidence for the execv failure.
+            let init_owned = init_path.to_string();
+            let mut child = child;
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                let status = child.try_wait();
+                native_trace(&format!("child status after 5s: {:?}", status));
+                trace_state(&init_owned, false);
+            });
+        }
+        Err(e) => {
+            error!("renderer_init: spawn ./init failed: {:?}", e);
+            native_trace(&format!("spawn ./init FAILED: {:?}", e));
         }
     }
 }

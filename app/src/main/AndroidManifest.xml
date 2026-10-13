@@ -18,6 +18,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <!-- Keeps the container process out of the cached/frozen bucket: a whole
+         Android system runs in this process while it is backgrounded. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
     <application
         android:allowBackup="true"
@@ -82,6 +85,15 @@
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
             </intent-filter>
         </provider>
+
+        <!-- Pins the container process out of the cached/frozen state while
+             the container runs in the background. Not exported: it is started
+             by this app only, and stopWithTask=false keeps it alive when the
+             task is swiped away (the container keeps running by design). -->
+        <service
+            android:name=".ContainerService"
+            android:exported="false"
+            android:stopWithTask="false" />
 
     </application>
 

@@ -113,8 +113,21 @@ public final class RomManager {
     }
 
     private static void killOrphanProcess() {
-        Shell shell = ShellUtil.newSh();
-        shell.newJob().add("ps -ef | awk '{if($3==1) print $2}' | xargs kill -9").exec();
+        // This spawns a shell and runs ps/awk/xargs; it used to run inline in
+        // Application.attachBaseContext(), i.e. on the UI thread before
+        // Application.onCreate() on every cold start - a noticeable stall just
+        // opening the app. Nothing here needs to finish before the container
+        // boots: it only reaps processes this UID already lost (PPID 1), while
+        // the container it will find later is a child of this process, never
+        // of PID 1.
+        new Thread(() -> {
+            try {
+                Shell shell = ShellUtil.newSh();
+                shell.newJob().add("ps -ef | awk '{if($3==1) print $2}' | xargs kill -9").exec();
+            } catch (Throwable t) {
+                Log.w(TAG, "killOrphanProcess failed", t);
+            }
+        }, "kill-orphan").start();
     }
 
     public static class RomInfo {

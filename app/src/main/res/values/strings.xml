@@ -76,4 +76,7 @@
     <string name="settings_key_reboot">Reboot</string>
     <string name="replace_rom_unofficial_tips">Sorry, please edit the rom info and avoid using official author name :)</string>
     <string name="booting_tips">Booting</string>
+    <!-- foreground service for the running container -->
+    <string name="container_service_channel">Container</string>
+    <string name="container_running">Container running</string>
 </resources>
