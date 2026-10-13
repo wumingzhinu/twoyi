@@ -318,7 +318,12 @@ pub fn renderer_reset_window(
     debug!("reset_window");
     unsafe {
         let window = ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface);
+        if window.is_null() {
+            error!("reset_window: ANativeWindow_fromSurface was null!");
+            return;
+        }
         renderer_bindings::resetSubWindow(window as *mut c_void, 0, 0, _width, _height, _width, _height, 1.0, 0.0);
+        release_surface_window(window);
     }
 }
 
@@ -328,8 +333,38 @@ pub fn renderer_remove_window(env: JNIEnv, _clz: jclass, surface: jobject) {
 
     unsafe {
         let window = ndk_sys::ANativeWindow_fromSurface(env.get_native_interface(), surface);
+        if window.is_null() {
+            error!("remove_window: ANativeWindow_fromSurface was null!");
+            return;
+        }
         renderer_bindings::removeSubWindow(window as *mut c_void);
+        release_surface_window(window);
     }
+}
+
+/// Hand back the strong reference that `ANativeWindow_fromSurface` granted.
+///
+/// That call returns a *new* reference the caller owns, which must go back to
+/// the system via `ANativeWindow_release`. Nothing in this crate ever did
+/// that: the `ndk` 0.6 `NativeWindow` type is a bare pointer wrapper with no
+/// `Drop` impl (unlike `Asset`, `Image`, `ForeignLooper` ... in the same
+/// crate), so it silently leaked. Both `renderer_reset_window` and
+/// `renderer_remove_window` call `ANativeWindow_fromSurface`, so every
+/// background/foreground round trip leaked another reference and left the
+/// Surface's BufferQueue pinned - slow, unbounded growth over a long session.
+///
+/// Releasing here cannot pull the rug out from under the renderer:
+/// `ANativeWindow_fromSurface` returns the *same* `ANativeWindow` object for a
+/// given `Surface` and only bumps its refcount, and `renderer_init` already
+/// holds a reference that lives as long as the renderer thread does. The
+/// pointer the renderer stores therefore stays valid; the reference taken by
+/// these two callbacks is surplus.
+///
+/// Deliberately not routed through `ndk::native_window::NativeWindow`: since
+/// that type does not release on drop, wrapping it here would re-introduce
+/// exactly the leak it is meant to fix.
+unsafe fn release_surface_window(window: *mut ndk_sys::ANativeWindow) {
+    ndk_sys::ANativeWindow_release(window);
 }
 
 #[no_mangle]

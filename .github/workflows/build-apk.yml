@@ -124,6 +124,17 @@ jobs:
           ./gradlew --no-daemon assembleRelease
           find app/build/outputs -name "*.apk" -exec ls -lh {} \;
 
+      # Blocks publication of an APK that cannot load on a 16 KB page-size
+      # device (Android 15+, common on Android 17). bionic hard-rejects any
+      # .so whose PT_LOAD p_align is below the system page size, and this app
+      # cannot lean on the platform's 16 KB backcompat mode (it needs
+      # useLegacyPackaging=false, but the ROM execv's the extracted
+      # libloader.so/libadb.so). See scripts/check_elf_alignment.sh.
+      - name: 16 KB page-size gate
+        run: |
+          chmod +x scripts/check_elf_alignment.sh
+          scripts/check_elf_alignment.sh app/build/outputs/apk/release/*.apk
+
       - uses: actions/upload-artifact@v4
         with:
           name: twoyi-arm64-release

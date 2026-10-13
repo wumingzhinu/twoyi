@@ -27,6 +27,7 @@ import android.graphics.SurfaceTexture;
 import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.util.SparseArray;
 import android.util.SparseIntArray;
 import android.view.TextureView;
@@ -53,6 +54,8 @@ import io.twoyi.utils.ShellUtil;
  */
 
 public class BootLogTexture extends TextureView implements TextureView.SurfaceTextureListener {
+
+    private static final String TAG = "BootLogTexture";
 
     private final AtomicBoolean mRendering = new AtomicBoolean(false);
 
@@ -168,7 +171,16 @@ public class BootLogTexture extends TextureView implements TextureView.SurfaceTe
             startRomLogTail();
 
             while (mRendering.get()) {
-                render();
+                try {
+                    render();
+                } catch (Throwable t) {
+                    // The surface can be torn down under us (onSurfaceTextureDestroyed
+                    // now releases it), so lockCanvas() may legitimately fail on the
+                    // last frame. Swallow it: throwing here would unwind out of this
+                    // loop and skip waitAndClose() below, leaking the root shell.
+                    Log.w(TAG, "boot log render failed", t);
+                    break;
+                }
                 SystemClock.sleep(16);
             }
 
@@ -233,7 +245,10 @@ public class BootLogTexture extends TextureView implements TextureView.SurfaceTe
     @Override
     public boolean onSurfaceTextureDestroyed(@NonNull SurfaceTexture surface) {
         mRendering.set(false);
-        return false;
+        // true == "release the SurfaceTexture for me". Returning false means
+        // the caller takes ownership, and nothing here ever released it, so
+        // every boot leaked a SurfaceTexture (and the GL texture behind it).
+        return true;
     }
 
     @Override
@@ -245,6 +260,14 @@ public class BootLogTexture extends TextureView implements TextureView.SurfaceTe
         Canvas canvas = null;
         try {
             canvas = lockCanvas();
+            // lockCanvas() can return null once the SurfaceTexture has gone
+            // away (the render thread is separate from the one that tears the
+            // view down, so it can still be inside this loop). The old code
+            // dereferenced it unguarded, which NPE'd, killed the worker and
+            // left the logcat job it owned running forever.
+            if (canvas == null) {
+                return;
+            }
 
             // clear canvas
             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
